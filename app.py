@@ -11,28 +11,25 @@ def init_db():
   conn = sqlite3.connect(DB_NAME)
   cursor = conn.cursor()
 
-  # 商品マスター（容量と単位の基準を追加）
   cursor.execute("""
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             category TEXT,
-            unit_name TEXT, -- 単位の名称（例: ml, g, 個, m, 枚）
-            base_amount REAL -- 比較の基準量（例: 100 や 1。基本は「1」または「100」）
+            unit_name TEXT
         )
     """)
 
-  # 価格・店舗データ（総額と、自動計算された単位単価を保存）
   cursor.execute("""
         CREATE TABLE IF NOT EXISTS prices (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             product_id INTEGER,
-            store_type TEXT, -- 'コストコ', '近隣店舗', 'Amazon'
-            store_name TEXT, -- 'コストコ つくば倉庫店', 'ウエルシア 古河店' など
-            total_price REAL, -- 購入総額（税込）
-            total_capacity REAL, -- そのときの総容量・数量（例: 1500ml, 44個など）
-            unit_price REAL, -- 計算された1単位あたりの価格
-            is_sale INTEGER, -- 1: 特売, 0: 通常
+            store_type TEXT,
+            store_name TEXT,
+            total_price REAL,
+            total_capacity REAL,
+            unit_price REAL,
+            is_sale INTEGER,
             updated_at TEXT,
             FOREIGN KEY(product_id) REFERENCES products(id)
         )
@@ -47,7 +44,8 @@ st.set_page_config(
     page_title="買い物価格比較 & 底値DB", page_icon="🛒", layout="wide"
 )
 
-st.title("🛒 買い物価格比較 & 底値DB（単位単価対応版）")
+# タイトルを少しすっきりしたサイズに変更
+st.markdown("### 🛒 買い物価格比較 & 底値DB（単位単価対応版）")
 st.caption(
     "リポジトリ: `shohinhikaku-bycostco-amazonETS` | コストコ各店・近隣店舗 vs"
     " Amazon定期便"
@@ -60,7 +58,7 @@ menu = st.sidebar.selectbox(
 
 # --- ① 価格比較・検索画面 ---
 if menu == "価格比較・検索":
-  st.header("🔍 最安値・単位単価チェック")
+  st.markdown("#### 🔍 最安値・単位単価チェック")
 
   conn = sqlite3.connect(DB_NAME)
   prices_df = pd.read_sql("SELECT * FROM prices", conn)
@@ -68,8 +66,15 @@ if menu == "価格比較・検索":
 
   if prices_df.empty:
     st.info(
-        "まだ価格データが登録されていません。「商品・価格の登録」からデータを追加してください。"
+        "💡 まだ価格データが登録されていません。左側のメニューから「商品・価格の登録」を選んでデータを追加してください。"
     )
+    st.markdown("""
+        **【比較の進め方ヒント】**
+        * **Amazon:** 定期おトク便の価格と、その内容量（例: 1000ml、24個など）を登録します。
+        * **コストコ各店:** 倉庫店名（つくば店など）を選び、大容量パック全体の総額と総容量を登録します。
+        * **近隣店舗:** ドラッグストアやスーパーの価格を登録し、特売のときはチェックを入れます。
+        * **結果:** アプリが自動で「1単位あたりの価格」に換算し、どこが一番安いかを示してくれます！
+        """)
   else:
     categories = [
         "すべて",
@@ -99,11 +104,10 @@ if menu == "価格比較・検索":
     conn.close()
 
     if not df.empty:
-      st.subheader("📊 登録済み価格・単価一覧")
-      # 見やすく小数点を整える
+      st.markdown("##### 📊 登録済み価格・単価一覧")
       st.dataframe(df, use_container_width=True)
 
-      st.subheader("💡 商品別 単位単価の比較（どこが一番安いか？）")
+      st.markdown("##### 💡 商品別 単位単価の比較（どこが一番安いか？）")
       target_product = st.selectbox(
           "比較したい商品を選択", df["商品名"].unique()
       )
@@ -120,18 +124,18 @@ if menu == "価格比較・検索":
           ]]
       )
 
-      # 最安の提案（単位単価が最も安いものを抽出）
       min_row = prod_df.iloc[0]
       st.success(
           f"🏆 **真の最安値（単位あたり）:** 【{min_row['店舗名']}】 で **1{min_row['単位']}あたり"
-          f" {min_row['単位あたり価格']:.2f} 円** です！ (総額: {min_row['総額']}円)"
+          f" {min_row['unit_price'] if 'unit_price' in min_row else min_row['単位あたり価格']:.2f} 円**"
+          f" です！ (総額: {min_row['総額']}円)"
       )
     else:
       st.warning("該当するデータがありません。")
 
 # --- ② 商品・価格の登録画面 ---
 elif menu == "商品・価格の登録":
-  st.header("📝 商品・価格の新規登録 / 更新")
+  st.markdown("#### 📝 商品・価格の新規登録 / 更新")
 
   conn = sqlite3.connect(DB_NAME)
   products_df = pd.read_sql("SELECT * FROM products", conn)
@@ -142,12 +146,12 @@ elif menu == "商品・価格の登録":
   )
 
   with st.form("register_form"):
-    st.subheader("1. 商品情報")
+    st.markdown("##### 1. 商品情報")
     is_new_product = st.checkbox("新しい商品を追加する")
 
     if is_new_product or not product_names:
       new_prod_name = st.text_input(
-          "商品名（例: メリーズパンツ Lサイズ または 柔軟剤〇〇）」"
+          "商品名（例: メリーズパンツ Lサイズ、アタック液体洗剤など）"
       )
       category = st.selectbox(
           "カテゴリ",
@@ -159,7 +163,7 @@ elif menu == "商品・価格の登録":
     else:
       selected_prod = st.selectbox("既存商品から選択", product_names)
 
-    st.subheader("2. 価格・容量・店舗情報")
+    st.markdown("##### 2. 価格・容量・店舗情報")
     store_type = st.selectbox("店舗タイプ", ["コストコ", "近隣店舗", "Amazon"])
 
     if store_type == "コストコ":
@@ -214,7 +218,6 @@ elif menu == "商品・価格の登録":
             "unit_name"
         ].values[0]
 
-      # 1単位あたりの価格を自動計算
       unit_price = total_price / total_capacity if total_capacity > 0 else 0
       today = datetime.date.today().isoformat()
 
@@ -243,7 +246,7 @@ elif menu == "商品・価格の登録":
 
 # --- ③ 店舗マスタ設定画面 ---
 elif menu == "店舗マスタ設定":
-  st.header("⚙️ よく使う店舗の管理")
+  st.markdown("#### ⚙️ よく使う店舗の管理")
   st.write(
       "コストコ各倉庫店や、近隣のよく行く店舗を登録して、価格差を比較しやすくします。"
   )
