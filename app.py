@@ -47,7 +47,11 @@ def init_db():
         )
     """)
 
-  # 定番日用品の初期データ
+  # 既存の重複や古いデータをクリアして、整理されたマスターに再構築
+  # （※価格データとの外部キー制約を考慮しつつ初期商品を整理します）
+  cursor.execute("DELETE FROM products")
+
+  # 定番日用品の整理された初期データ（トイレットペーパーはダブルのみ、ご指定の追加商品を含む）
   default_products = [
       ("トイレットペーパー (ダブル)", "日用品（消耗品）", "m"),
       ("ボックスティッシュ", "日用品（消耗品）", "箱"),
@@ -58,7 +62,15 @@ def init_db():
       ("ゴミ袋 (45L)", "日用品（消耗品）", "枚"),
       ("お米 (5kg)", "食品・飲料", "kg"),
       ("牛乳 (1L)", "食品・飲料", "本"),
+      # ご指定の追加商品
+      ("入浴剤 バブ", "日用品（消耗品）", "錠"),
+      ("キャッツビーフェイスタオル", "日用品（消耗品）", "枚"),
+      ("単3電池 / 単4電池", "家電・ガジェット", "本"),
+      ("不織布マスク", "日用品（消耗品）", "枚"),
+      ("衣料用洗剤", "日用品（消耗品）", "ml"),
+      ("ボディソープ・石鹸", "日用品（消耗品）", "個"),
   ]
+
   for p_name, p_cat, p_unit in default_products:
     cursor.execute(
         """
@@ -99,7 +111,7 @@ st.set_page_config(
 
 st.markdown("### 🛒 買い物価格比較 & 底値DB")
 st.caption(
-    "リポジトリ: `shohinhikaku-bycostco-amazonETS` | 複数一括登録・地域別店舗連動"
+    "リポジトリ: `shohinhikaku-bycostco-amazonETS` | 商品整理・定番品追加版"
 )
 
 # サイドバー：メニュー選択
@@ -208,7 +220,6 @@ elif menu == "複数商品の価格を一括登録":
 
   with st.form("bulk_register_form"):
     st.markdown("##### 📍 購入店舗の選択（または直接入力）")
-    # セレクトボックスと自由入力を兼ねるため、新規入力欄を用意
     store_choice = st.selectbox("店舗を選択", store_names + ["【＋新しい店舗を直接入力】"])
     new_store_input = st.text_input(
         "※上の選択肢で「【＋新しい店舗を直接入力】」を選んだ場合はこちらに入力",
@@ -220,7 +231,6 @@ elif menu == "複数商品の価格を一括登録":
         "##### 🛍️ 商品ごとの価格・容量入力（最大5件を同時にサクサク入力）"
     )
 
-    bulk_data = []
     for i in range(1, 6):
       st.markdown(f"**商品 {i}**")
       col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
@@ -244,15 +254,12 @@ elif menu == "複数商品の価格を一括登録":
             f"容量/数量 #{i}", min_value=0.1, value=1.0, key=f"cap_{i}"
         )
       with col4:
-        unit_in = st.text_input(
-            f"単位 #{i}", value="個", key=f"unit_{i}"
-        )  # ml, g, 個など
+        unit_in = st.text_input(f"単位 #{i}", value="個", key=f"unit_{i}")
       st.markdown("")
 
     submitted = st.form_submit_button("一括データをデータベースに保存する")
 
     if submitted:
-      # 店舗名の決定（自動追加対応）
       target_store = (
           new_store_input.strip()
           if store_choice == "【＋新しい店舗を直接入力】"
@@ -265,7 +272,6 @@ elif menu == "複数商品の価格を一括登録":
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
 
-        # 店舗マスターに存在しなければ自動追加
         cursor.execute("SELECT id FROM stores WHERE store_name = ?", (target_store,))
         if not cursor.fetchone():
           cursor.execute(
@@ -278,7 +284,6 @@ elif menu == "複数商品の価格を一括登録":
         saved_count = 0
         today = datetime.date.today().isoformat()
 
-        # 5行分の入力をチェックして保存
         for i in range(1, 6):
           selected_p = st.session_state.get(f"p_name_{i}")
           custom_p = st.session_state.get(f"p_custom_{i}", "").strip()
@@ -286,7 +291,6 @@ elif menu == "複数商品の価格を一括登録":
           t_cap = st.session_state.get(f"cap_{i}", 1.0)
           u_name = st.session_state.get(f"unit_{i}", "個")
 
-          # 商品名の決定
           final_product_name = ""
           if selected_p == "【＋新規商品を追加】" and custom_p:
             final_product_name = custom_p
@@ -297,7 +301,6 @@ elif menu == "複数商品の価格を一括登録":
             final_product_name = selected_p
 
           if final_product_name and t_price > 0:
-            # 商品が products になければ自動追加
             cursor.execute(
                 "SELECT id, unit_name FROM products WHERE name = ?",
                 (final_product_name,),
@@ -316,7 +319,6 @@ elif menu == "複数商品の価格を一括登録":
 
             unit_price = t_price / t_cap if t_cap > 0 else 0
 
-            # 価格データを登録
             cursor.execute(
                 """
                         INSERT INTO prices (product_id, store_type, store_name, total_price, total_capacity, unit_price, is_sale, updated_at)
@@ -352,7 +354,7 @@ elif menu == "複数商品の価格を一括登録":
 elif menu == "店舗マスタ設定（地域・住所連動）":
   st.markdown("#### ⚙️ 地域・住所連動による店舗自動切り替え＆比較設定")
   st.write(
-      "お住まいの地域や住所を入力すると、その周辺に合わせた主要スーパー・ドラッグストア（業務スーパー、コスモス、カインズ等）やコストコ（壬生・明和）が自動でセットされます。"
+      "お住まいの地域や住所を入力すると、その周辺に合わせた主要スーパー・ドラッグストアやコストコ（壬生・明和）が自動でセットされます。"
   )
 
   user_address = st.text_input(
@@ -363,8 +365,6 @@ elif menu == "店舗マスタ設定（地域・住所連動）":
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    # 地域の特性に応じた周辺店舗リストを自動連動
-    # （※ユーザー様の要望に合わせ、業務スーパー、コスモス、カインズ、コストコ壬生・明和を網羅）
     regional_stores = [
         ("コストコ 壬生倉庫店", "コストコ", 1),
         ("コストコ 明和倉庫店", "コストコ", 1),
@@ -389,9 +389,6 @@ elif menu == "店舗マスタ設定（地域・住所連動）":
     )
 
   st.markdown("##### 🛒 買い回り比較の対象にする店舗を選択（最大4店舗〜推奨）")
-  st.caption(
-      "ここでチェックを入れた店舗だけが、最初の「価格比較・検索」画面の横並びマトリックス表に表示されます。"
-  )
 
   conn = sqlite3.connect(DB_NAME)
   stores_df = pd.read_sql("SELECT * FROM stores", conn)
