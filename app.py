@@ -3,7 +3,7 @@ import sqlite3
 import pandas as pd
 import streamlit as st
 
-# データベースの初期化
+# データベースの初期化と定番商品の初期登録
 DB_NAME = "database.db"
 
 
@@ -14,7 +14,7 @@ def init_db():
   cursor.execute("""
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
+            name TEXT NOT NULL UNIQUE,
             category TEXT,
             unit_name TEXT
         )
@@ -34,6 +34,24 @@ def init_db():
             FOREIGN KEY(product_id) REFERENCES products(id)
         )
     """)
+
+  # 定番日用品の初期データ（まだデータがない場合のみ自動追加）
+  default_products = [
+      ("トイレットペーパー", "日用品（消耗品）", "m"),
+      ("ティッシュペーパー", "日用品（消耗品）", "箱"),
+      ("洗濯用液体洗剤", "日用品（消耗品）", "ml"),
+      ("食器用洗剤", "日用品（消耗品）", "ml"),
+      ("お米 (5kg)", "食品・飲料", "kg"),
+  ]
+  for p_name, p_cat, p_unit in default_products:
+    cursor.execute(
+        """
+            INSERT OR IGNORE INTO products (name, category, unit_name) 
+            VALUES (?, ?, ?)
+        """,
+        (p_name, p_cat, p_unit),
+    )
+
   conn.commit()
   conn.close()
 
@@ -60,7 +78,6 @@ if menu == "価格比較・検索":
   st.markdown("#### 🔍 店舗横並び・単位単価チェック")
 
   conn = sqlite3.connect(DB_NAME)
-  # SELECT句を正しく記述するように修正
   query = """
         SELECT 
             p.id as product_id, 
@@ -80,15 +97,13 @@ if menu == "価格比較・検索":
 
   if df.empty:
     st.info(
-        "💡 まだ価格データが登録されていません。左側のメニューから「商品・価格の登録」を選んでデータを追加してください。"
+        "💡 まだ価格データが登録されていません。左側のメニューから「商品・価格の登録」を行ってください。"
     )
   else:
-    # 商品ごとの横並び（ピボットテーブル風）表示
     st.markdown(
         "##### 📊 店舗別・商品別の単位単価一覧（左右に店舗ごとの単価を比較）"
     )
 
-    # 単位あたり価格を店舗ごとに横並びにする
     pivot_price = df.pivot_table(
         index=["商品名", "単位"],
         columns="店舗名",
@@ -122,7 +137,10 @@ if menu == "価格比較・検索":
 
 # --- ② 商品・価格の登録画面 ---
 elif menu == "商品・価格の登録":
-  st.markdown("#### 📝 商品・価格の新規登録 / 更新")
+  st.markdown("#### 📝 価格の登録（自由入力・自動登録対応）")
+  st.write(
+      "既存の定番商品を選ぶか、新しい商品名をそのまま入力してください。登録がない商品は自動で追加されます。"
+  )
 
   conn = sqlite3.connect(DB_NAME)
   products_df = pd.read_sql("SELECT * FROM products", conn)
@@ -133,22 +151,28 @@ elif menu == "商品・価格の登録":
   )
 
   with st.form("register_form"):
-    st.markdown("##### 1. 商品情報")
-    is_new_product = st.checkbox("新しい商品を追加する")
+    st.markdown("##### 1. 商品の選択 または 入力")
+    # セレクトボックスと自由入力を組み合わせる（セレクトボックスにないものは新規追加扱いに）
+    input_product_name = st.selectbox(
+        "商品名（リストから選択、または下に新しい名前を入力）",
+        ["-- 新規商品を直接入力する --"] + product_names,
+    )
 
-    if is_new_product or not product_names:
-      new_prod_name = st.text_input(
-          "商品名（例: メリーズパンツ Lサイズ、洗剤〇〇など）"
-      )
+    new_prod_name = st.text_input(
+        "※上で「-- 新規商品を直接入力する --」を選んだ場合は、こちらに商品名を入力",
+        placeholder="例: メリーズパンツ Lサイズ",
+    )
+
+    col1, col2 = st.columns(2)
+    with col1:
       category = st.selectbox(
           "カテゴリ",
           ["日用品（消耗品）", "食品・飲料", "家電・ガジェット", "その他"],
       )
+    with col2:
       unit_name = st.text_input(
-          "単位の基準（例: ml, g, 個, m, 枚 など）", value="個"
+          "単位の基準（例: ml, g, 個, m, 箱 など）", value="個"
       )
-    else:
-      selected_prod = st.selectbox("既存商品から選択", product_names)
 
     st.markdown("##### 2. 店舗と価格情報")
     store_type = st.selectbox("店舗タイプ", ["コストコ", "近隣店舗", "Amazon"])
@@ -185,51 +209,63 @@ elif menu == "商品・価格の登録":
     submitted = st.form_submit_button("データベースに保存して比較表を更新")
 
     if submitted:
-      conn = sqlite3.connect(DB_NAME)
-      cursor = conn.cursor()
+      # 登録する商品名の決定
+      target_name = (
+          new_prod_name.strip()
+          if input_product_name == "-- 新規商品を直接入力する --"
+          else input_product_name
+      )
 
-      if is_new_product or not product_names:
+      if not target_name:
+        st.error("⚠️ 商品名を入力するか、選択してください。")
+      else:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+
+        # 商品が既存か確認し、なければ自動登録
+        cursor.execute("SELECT id, unit_name FROM products WHERE name = ?", (target_name,))
+        row = cursor.fetchone()
+
+        if row:
+          product_id = row[0]
+          u_name = row[1]
+        else:
+          cursor.execute(
+              "INSERT INTO products (name, category, unit_name) VALUES (?, ?,"
+              " ?)",
+              (target_name, category, unit_name),
+          )
+          conn.commit()
+          product_id = cursor.lastrowid
+          u_name = unit_name
+
+        unit_price = (
+            total_price / total_capacity if total_capacity > 0 else 0
+        )
+        today = datetime.date.today().isoformat()
+
         cursor.execute(
-            "INSERT INTO products (name, category, unit_name) VALUES (?, ?,"
-            " ?)",
-            (new_prod_name, category, unit_name),
+            """
+                    INSERT INTO prices (product_id, store_type, store_name, total_price, total_capacity, unit_price, is_sale, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+            (
+                product_id,
+                store_type,
+                store_name,
+                total_price,
+                total_capacity,
+                unit_price,
+                1 if is_sale else 0,
+                today,
+            ),
         )
         conn.commit()
-        product_id = cursor.lastrowid
-        u_name = unit_name
-      else:
-        product_id = products_df[products_df["name"] == selected_prod][
-            "id"
-        ].values[0]
-        u_name = products_df[products_df["name"] == selected_prod][
-            "unit_name"
-        ].values[0]
-
-      unit_price = total_price / total_capacity if total_capacity > 0 else 0
-      today = datetime.date.today().isoformat()
-
-      cursor.execute(
-          """
-                INSERT INTO prices (product_id, store_type, store_name, total_price, total_capacity, unit_price, is_sale, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-          (
-              product_id,
-              store_type,
-              store_name,
-              total_price,
-              total_capacity,
-              unit_price,
-              1 if is_sale else 0,
-              today,
-          ),
-      )
-      conn.commit()
-      conn.close()
-      st.success(
-          f"✨ 保存完了！ 1{u_name}あたり **{unit_price:.2f}円** で横並び表に反映されました"
-          "！"
-      )
+        conn.close()
+        st.success(
+            f"✨ 「{target_name}」の価格を保存しました！ (1{u_name}あたり"
+            f" **{unit_price:.2f}円**)"
+        )
 
 # --- ③ 店舗マスタ設定画面 ---
 elif menu == "店舗マスタ設定":
