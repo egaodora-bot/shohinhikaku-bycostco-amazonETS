@@ -28,7 +28,7 @@ def init_db():
     cursor.execute("ALTER TABLE products ADD COLUMN maker_name TEXT")
     conn.commit()
   except sqlite3.OperationalError:
-    pass  # すでにカラムが存在する場合はエラーを無視
+    pass
 
   # 価格データ
   cursor.execute("""
@@ -159,57 +159,34 @@ menu = st.sidebar.radio(
 # --- ① 価格比較・検索画面 ---
 if menu == "🔍 価格比較・検索":
   st.markdown("#### 🔍 商品の価格・実質単価比較")
-  st.write(
-      "調べたい商品名を入力または選択してください。メーカー名もあわせて表示されます。"
-  )
 
   conn = sqlite3.connect(DB_NAME)
   cursor = conn.cursor()
-  cursor.execute("SELECT name FROM products")
-  product_list = [row[0] for row in cursor.fetchall()]
+  cursor.execute("SELECT id, maker_name, name FROM products")
+  all_products = cursor.fetchall()
   conn.close()
 
-  target_product = st.selectbox(
-      "比較したい商品を選択（または下に直接入力）",
-      product_list,
-      index=0 if product_list else 0,
+  # 選択肢用のリストを作成（「メーカー名: 商品名」の形式）
+  prod_options = {
+      f"[{p[1] if p[1] else 'ノーブランド'}] {p[2]}": p[0] for p in all_products
+  }
+
+  selected_label = st.selectbox(
+      "登録済み商品から選択して比較",
+      list(prod_options.keys()) if prod_options else ["（商品がありません）"],
   )
 
-  custom_input = st.text_input(
-      "または、新しい商品名やキーワードで検索・登録",
-      placeholder="例: エリエール 贅沢保湿",
-  )
-  if custom_input.strip():
-    target_product = custom_input.strip()
+  if prod_options and selected_label in prod_options:
+    target_prod_id = prod_options[selected_label]
 
-  if target_product:
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-
     cursor.execute(
-        "SELECT id, maker_name, spec_detail, unit_name FROM products WHERE name"
-        " = ?",
-        (target_product,),
+        "SELECT maker_name, name, spec_detail, unit_name FROM products WHERE"
+        " id = ?",
+        (target_prod_id,),
     )
-    prod_row = cursor.fetchone()
-
-    if not prod_row:
-      cursor.execute(
-          """
-                INSERT INTO products (maker_name, name, category, unit_name, spec_detail) 
-                VALUES (?, ?, ?, ?, ?)
-            """,
-          ("ノーブランド", target_product, "日用品・食品", "個", "ユーザー追加商品"),
-      )
-      conn.commit()
-      cursor.execute(
-          "SELECT id, maker_name, spec_detail, unit_name FROM products WHERE name"
-          " = ?",
-          (target_product,),
-      )
-      prod_row = cursor.fetchone()
-
-    prod_id, maker_name, spec_detail, unit_name = prod_row
+    maker_name, target_product, spec_detail, unit_name = cursor.fetchone()
 
     cursor.execute(
         """
@@ -218,14 +195,14 @@ if menu == "🔍 価格比較・検索":
             WHERE product_id = ?
             ORDER BY unit_price ASC
         """,
-        (prod_id,),
+        (target_prod_id,),
     )
     rows = cursor.fetchall()
     conn.close()
 
     st.markdown("---")
     st.markdown(
-        f"##### 📦 選択中商品: **[{maker_name if maker_name else 'メーカー不明'}]"
+        f"##### 📦 選択中商品: **[{maker_name if maker_name else 'ノーブランド'}]"
         f" {target_product}**"
     )
     st.markdown(
