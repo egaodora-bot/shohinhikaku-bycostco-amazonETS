@@ -242,7 +242,7 @@ def fetch_and_register_prices(product_name):
 if menu == "🔍 価格比較・検索（AIまとめ買い提案）":
   st.markdown("#### 🔍 商品を選択して価格・まとめ買いを比較する")
   st.write(
-      "商品を選ぶと、**商品の詳しい仕様（組数・シングル/ダブル等）**やパッケージ写真を確認しながら、コストコやAmazonのまとめ買いを含めた最安値が比較できます。"
+      "商品を選ぶと各店舗の価格が比較できます。**下の店舗ボタンをクリックする**と、そのお店のパッケージ写真や詳細スペックがいつでも確認できます。"
   )
 
   conn = sqlite3.connect(DB_NAME)
@@ -307,25 +307,13 @@ if menu == "🔍 価格比較・検索（AIまとめ買い提案）":
         rows = []
       conn.close()
 
-      # --- 商品詳細と写真プレビューエリア ---
+      # --- 基本スペックの表示 ---
       st.markdown("---")
-      col_img, col_info = st.columns([1, 2])
-      with col_img:
-        if image_url and image_url.startswith("http"):
-          try:
-            st.image(image_url, caption=target_product, use_container_width=True)
-          except:
-            st.info("📸 画像の読み込みに失敗しました")
-        else:
-          st.info("📸 画像未登録")
-
-      with col_info:
-        st.markdown(f"##### 📦 【商品名】 {target_product}")
-        st.markdown(
-            f"**📝 スペック・規格詳細**: `{spec_detail if spec_detail else '未登録'}`"
-        )
-        st.markdown(f"**📏 基準単位**: `{unit_name}`")
-
+      st.markdown(f"##### 📦 選択中商品: **{target_product}**")
+      st.markdown(
+          f"**📝 スペック・規格詳細**: `{spec_detail if spec_detail else '未登録'}`"
+          f" | **📏 単位**: `{unit_name}`"
+      )
       st.markdown("---")
       st.markdown(f"##### 📊 価格・まとめ買い比較結果")
 
@@ -369,8 +357,40 @@ if menu == "🔍 価格比較・検索（AIまとめ買い提案）":
             f"- **まとめ買い総額**: **{int(best_row[1]):,}円** （全"
             f" {int(best_row[2])} {unit_name}）\n"
             f"- **1{unit_name}あたりの単価**: **{best_row[3]:.1f}円**"
-            f" （スペック: {spec_detail}）"
         )
+
+        # --- 店舗・販売会社をクリックして写真を確認するインタラクティブエリア ---
+        st.markdown("---")
+        st.markdown(
+            "##### 📸 店舗・販売会社の名前をクリックして商品写真・パッケージを確認する"
+        )
+
+        store_names_list = [r[0] for r in rows]
+        selected_store_preview = st.selectbox(
+            "確認したい店舗・販売会社を選択してください", store_names_list
+        )
+
+        if selected_store_preview:
+          col_p_img, col_p_txt = st.columns([1, 2])
+          with col_p_img:
+            if image_url and image_url.startswith("http"):
+              try:
+                st.image(
+                    image_url,
+                    caption=f"{selected_store_preview} の取扱商品",
+                    use_container_width=True,
+                )
+              except:
+                st.info("📸 画像の読み込みに失敗しました")
+            else:
+              st.info("📸 この商品の写真URLが未登録です")
+          with col_p_txt:
+            st.markdown(f"**🏪 店舗・会社名**: {selected_store_preview}")
+            st.markdown(f"**📦 対象商品**: {target_product}")
+            st.markdown(f"**📝 スペック**: {spec_detail}")
+            st.info(
+                "💡「店舗・商品マスタ管理」画面から、実際の商品パッケージ画像のURLを登録すると、より正確な写真が表示されます。"
+            )
 
 # --- ② 価格・商品の登録画面 ---
 elif menu == "📝 価格・商品の登録":
