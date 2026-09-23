@@ -16,7 +16,7 @@ def init_db():
   cursor.execute("DROP TABLE IF EXISTS products")
   cursor.execute("DROP TABLE IF EXISTS stores")
 
-  # 商品マスタ（スペック、詳細、画像URLを追加）
+  # 商品マスタ
   cursor.execute("""
         CREATE TABLE products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,7 +54,7 @@ def init_db():
         )
     """)
 
-  # 初期データの投入（商品：スペック・画像付き）
+  # 初期データの投入（商品）
   default_products = [
       (
           "ボックスティッシュ (エリエール等 5箱パック)",
@@ -139,7 +139,7 @@ st.markdown(
     h1, h2, h3, h4, h5, h6, p, label, span, div {
         color: #FFFFFF !important;
     }
-    .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"] {
+    .stTextInput input, .stNumberInput input {
         background-color: #222222 !important;
         color: #FFFFFF !important;
     }
@@ -276,34 +276,49 @@ if menu == "🔍 価格比較・検索（AIまとめ買い提案）":
           (target_product,),
       )
       prod_info = cursor.fetchone()
-      prod_id, spec_detail, image_url, unit_name = prod_info
+      if prod_info:
+        prod_id, spec_detail, image_url, unit_name = prod_info
+      else:
+        prod_id, spec_detail, image_url, unit_name = (
+            None,
+            "仕様未登録",
+            "",
+            "個",
+        )
 
       # 比較データの取得
-      cursor.execute(
-          """
-                SELECT 
-                    store_name, 
-                    total_price, 
-                    total_capacity, 
-                    unit_price, 
-                    updated_at
-                FROM prices 
-                WHERE product_id = ?
-                ORDER BY unit_price ASC
-            """,
-          (prod_id,),
-      )
-      rows = cursor.fetchall()
+      if prod_id:
+        cursor.execute(
+            """
+                    SELECT 
+                        store_name, 
+                        total_price, 
+                        total_capacity, 
+                        unit_price, 
+                        updated_at
+                    FROM prices 
+                    WHERE product_id = ?
+                    ORDER BY unit_price ASC
+                """,
+            (prod_id,),
+        )
+        rows = cursor.fetchall()
+      else:
+        rows = []
       conn.close()
 
       # --- 商品詳細と写真プレビューエリア ---
       st.markdown("---")
       col_img, col_info = st.columns([1, 2])
       with col_img:
-        if image_url:
-          st.image(image_url, caption=target_product, use_column_width=True)
+        if image_url and image_url.startswith("http"):
+          try:
+            st.image(image_url, caption=target_product, use_container_width=True)
+          except:
+            st.info("📸 画像の読み込みに失敗しました")
         else:
           st.info("📸 画像未登録")
+
       with col_info:
         st.markdown(f"##### 📦 【商品名】 {target_product}")
         st.markdown(
