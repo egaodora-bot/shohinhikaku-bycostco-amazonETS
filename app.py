@@ -47,6 +47,7 @@ def init_db():
         )
     """)
 
+  # 初期データの投入（商品）
   cursor.execute("SELECT COUNT(*) FROM products")
   if cursor.fetchone()[0] == 0:
     default_products = [
@@ -54,13 +55,14 @@ def init_db():
         ("ボックスティッシュ", "日用品（消耗品）", "箱"),
         ("洗濯用液体洗剤", "日用品（消耗品）", "ml"),
         ("食器用中性洗剤", "日用品（消耗品）", "ml"),
-        ("お風呂用洗剤", "日用品（消耗品）", "ml"),
         ("入浴剤 バブ", "日用品（消耗品）", "錠"),
         ("キャッツビーフェイスタオル", "日用品（消耗品）", "枚"),
         ("単3電池 / 単4電池", "家電・ガジェット", "本"),
         ("不織布マスク", "日用品（消耗品）", "枚"),
         ("衣料用洗剤", "日用品（消耗品）", "ml"),
         ("ボディソープ・石鹸", "日用品（消耗品）", "個"),
+        ("お米 (5kg)", "食品・飲料", "kg"),
+        ("牛乳 (1L)", "食品・飲料", "本"),
     ]
     for p_name, p_cat, p_unit in default_products:
       cursor.execute(
@@ -69,6 +71,7 @@ def init_db():
           (p_name, p_cat, p_unit),
       )
 
+  # 初期データの投入（店舗）
   cursor.execute("SELECT COUNT(*) FROM stores")
   if cursor.fetchone()[0] == 0:
     default_stores = [
@@ -96,7 +99,7 @@ st.set_page_config(
     page_title="買い物価格比較 & 底値DB", page_icon="🛒", layout="wide"
 )
 
-# --- 見やすいダークモード（白文字×黒背景）のデザイン適用 ---
+# --- ダークモード（白文字×黒背景）のデザイン適用 ---
 st.markdown(
     """
     <style>
@@ -134,17 +137,17 @@ st.sidebar.markdown("### 📌 メニュー")
 menu = st.sidebar.radio(
     "移動先を選択してください",
     [
-        "🔍 価格比較・検索（ワンクリックで最安値発見）",
+        "🔍 価格比較・検索（調べて比較）",
         "📝 価格・商品の登録",
         "⚙️ 店舗・商品マスタ管理",
     ],
 )
 
 # --- ① 価格比較・検索画面 ---
-if menu == "🔍 価格比較・検索（ワンクリックで最安値発見）":
-  st.markdown("#### 🔍 商品ごとの価格比較と最安値チェック")
+if menu == "🔍 価格比較・検索（調べて比較）":
+  st.markdown("#### 🔍 商品を選択して価格を調べる・比較する")
   st.write(
-      "調べたい商品を選択し、**「比較・検索する」ボタン**を押すと、各店舗の価格と最安値が分かりやすく表示されます。"
+      "比較したい商品を選び、**「🔍 最新価格を調べて比較する」**ボタンを押すと、各店舗の価格が呼び出され、最安値が目立つように表示されます。"
   )
 
   conn = sqlite3.connect(DB_NAME)
@@ -152,14 +155,15 @@ if menu == "🔍 価格比較・検索（ワンクリックで最安値発見）
   conn.close()
 
   if products_df.empty:
-    st.info("💡 まず「価格・商品の登録」から商品を追加してください。")
+    st.info("💡 まず「店舗・商品マスタ管理」または「価格・商品の登録」から商品を追加してください。")
   else:
-    with st.form("search_form"):
+    with st.form("search_flow_form"):
       target_product = st.selectbox(
-          "比較したい商品を選択", products_df["name"].tolist()
+          "比較したい商品を選択してください", products_df["name"].tolist()
       )
-      search_btn = st.form_submit_button("🔍 比較・検索する")
+      search_btn = st.form_submit_button("🔍 最新価格を調べて比較する")
 
+    # ボタンが押されたとき、または商品選択時に表示
     if search_btn or target_product:
       conn = sqlite3.connect(DB_NAME)
       query = """
@@ -182,15 +186,15 @@ if menu == "🔍 価格比較・検索（ワンクリックで最安値発見）
 
       if prod_df.empty:
         st.warning(
-            f"⚠️ 「{target_product}」の価格データがまだ登録されていません。「価格・商品の登録」画面から各店舗の価格を入力してください。"
+            f"⚠️ 「{target_product}」の価格データがまだ登録されていません。「価格・商品の登録」画面から各店舗の価格やネット情報を入力・追加してください。"
         )
       else:
-        # 最安値を目立たせるハイライト表示
+        # 最安値を目立たせるハイライト処理（緑色の背景・文字で強調）
         min_price = prod_df["単位あたり価格"].min()
 
         def highlight_cheapest(row):
           if row["単位あたり価格"] == min_price:
-            return ["background-color: #1b4332; color: #52b788; font-weight: bold"] * len(row)
+            return ["background-color: #1b4332; color: #52b788; font-weight: bold; font-size: 1.1em;"] * len(row)
           return [""] * len(row)
 
         st.dataframe(
@@ -268,7 +272,6 @@ elif menu == "📝 価格・商品の登録":
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
 
-        # 店舗確認・追加
         cursor.execute("SELECT id FROM stores WHERE store_name = ?", (target_store,))
         if not cursor.fetchone():
           cursor.execute(
@@ -278,7 +281,6 @@ elif menu == "📝 価格・商品の登録":
           )
           conn.commit()
 
-        # 商品確認・追加
         cursor.execute("SELECT id FROM products WHERE name = ?", (final_product,))
         p_row = cursor.fetchone()
         if p_row:
@@ -315,7 +317,7 @@ elif menu == "📝 価格・商品の登録":
         conn.close()
 
         st.success(
-            f"✨ 【{target_store}】の「{final_product}」（{price_val}円）を保存しました！「価格比較・検索」から確認できます。"
+            f"✨ 【{target_store}】の「{final_product}」（{price_val}円）を保存しました！"
         )
 
 # --- ③ 店舗・商品マスタ管理画面 ---
