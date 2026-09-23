@@ -11,7 +11,7 @@ def init_db():
   conn = sqlite3.connect(DB_NAME)
   cursor = conn.cursor()
 
-  # 商品マスタ（メーカー名カラムを追加）
+  # 商品マスタ
   cursor.execute("""
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -22,6 +22,13 @@ def init_db():
             spec_detail TEXT
         )
     """)
+
+  # 既存のテーブルに maker_name カラムがない場合に安全に追加する処理
+  try:
+    cursor.execute("ALTER TABLE products ADD COLUMN maker_name TEXT")
+    conn.commit()
+  except sqlite3.OperationalError:
+    pass  # すでにカラムが存在する場合はエラーを無視
 
   # 価格データ
   cursor.execute("""
@@ -366,7 +373,6 @@ elif menu == "📝 価格・商品の登録":
         p_row = cursor.fetchone()
         if p_row:
           prod_id = p_row[0]
-          # メーカー名が更新されていればアップデート
           cursor.execute(
               "UPDATE products SET maker_name = ? WHERE id = ?",
               (final_maker, prod_id),
