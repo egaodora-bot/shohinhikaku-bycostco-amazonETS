@@ -4,7 +4,7 @@ import sqlite3
 import pandas as pd
 import streamlit as st
 
-# データベースの初期化（構造変更時に自動再構築してエラーを防ぐ）
+# データベースの初期化
 DB_NAME = "database.db"
 
 
@@ -12,7 +12,6 @@ def init_db():
   conn = sqlite3.connect(DB_NAME)
   cursor = conn.cursor()
 
-  # 安全のため、旧テーブルを削除して最新の構造で再作成する
   cursor.execute("DROP TABLE IF EXISTS prices")
   cursor.execute("DROP TABLE IF EXISTS products")
   cursor.execute("DROP TABLE IF EXISTS stores")
@@ -172,9 +171,9 @@ def fetch_and_register_prices(product_name):
   for store_name in active_stores:
     rate = 0.95
     if "コストコ" in store_name:
-      rate = 0.72  # コストコは大容量まとめ買いで非常に安く設定
+      rate = 0.72
     elif "Amazon" in store_name:
-      rate = 0.82  # Amazonまとめ買い・定期便
+      rate = 0.82
     elif "ウエルシア" in store_name:
       rate = 1.10
 
@@ -212,15 +211,17 @@ if menu == "🔍 価格比較・検索（AIまとめ買い提案）":
   )
 
   conn = sqlite3.connect(DB_NAME)
-  products_df = pd.read_sql("SELECT name FROM products", conn)
+  cursor = conn.cursor()
+  cursor.execute("SELECT name FROM products")
+  product_list = [row[0] for row in cursor.fetchall()]
   conn.close()
 
-  if products_df.empty:
+  if not product_list:
     st.info("💡 まず「店舗・商品マスタ管理」から商品を追加してください。")
   else:
     with st.form("search_flow_form"):
       target_product = st.selectbox(
-          "比較したい商品を選択してください", products_df["name"].tolist()
+          "比較したい商品を選択してください", product_list
       )
       search_btn = st.form_submit_button(
           "✨ AI自動で最新価格・まとめ買いを調べる"
@@ -231,49 +232,54 @@ if menu == "🔍 価格比較・検索（AIまとめ買い提案）":
         fetch_and_register_prices(target_product)
 
       conn = sqlite3.connect(DB_NAME)
-      query = """
+      cursor = conn.cursor()
+      cursor.execute(
+          """
                 SELECT 
-                    pr.store_name as 店舗名, 
-                    pr.total_price as 支払総額, 
-                    pr.total_capacity as まとめ数量, 
-                    pr.unit_price as 1個あたり単価, 
-                    p.unit_name as 単位,
-                    pr.updated_at as 更新日
+                    pr.store_name, 
+                    pr.total_price, 
+                    pr.total_capacity, 
+                    pr.unit_price, 
+                    p.unit_name,
+                    pr.updated_at
                 FROM prices pr
                 JOIN products p ON pr.product_id = p.id
                 WHERE p.name = ?
                 ORDER BY pr.unit_price ASC
-            """
-      prod_df = pd.read_sql(query, conn, params=(target_product,))
+            """,
+          (target_product,),
+      )
+      rows = cursor.fetchall()
       conn.close()
 
       st.markdown(f"##### 📊 『{target_product}』の比較結果")
 
-      if prod_df.empty:
+      if not rows:
         st.warning(
             f"⚠️ 「{target_product}」の価格データがまだありません。上のボタンを押して自動取得してください。"
         )
       else:
-        unit_label = prod_df.loc[0, "単位"] if not prod_df.empty else "個"
+        unit_label = rows[0][4] if rows[0][4] else "個"
 
-        display_df = pd.DataFrame()
-        display_df["店舗名"] = prod_df["店舗名"]
-        display_df["支払総額"] = prod_df["支払総額"].apply(
-            lambda x: f"{int(x):,} 円" if pd.notnull(x) else ""
-        )
-        display_df["まとめ数量"] = prod_df["まとめ数量"].apply(
-            lambda x: f"{int(x)} {unit_label}" if pd.notnull(x) else ""
-        )
-        display_df["1個あたり単価"] = prod_df["1個あたり単価"].apply(
-            lambda x: f"{x:.1f} 円/{unit_label}" if pd.notnull(x) else ""
-        )
-        display_df["更新日"] = prod_df["更新日"]
+        data_list = []
+        raw_unit_prices = []
+        for r in rows:
+          store_name, t_price, t_cap, u_price, u_name, upd_date = r
+          data_list.append({
+              "店舗名": store_name,
+              "支払総額": f"{int(t_price):,} 円",
+              "まとめ数量": f"{int(t_cap)} {unit_label}",
+              "1個あたり単価": f"{u_price:.1f} 円/{unit_label}",
+              "更新日": upd_date,
+          })
+          raw_unit_prices.append(u_price)
 
-        min_unit_price = prod_df["1個あたり単価"].min()
+        display_df = pd.DataFrame(data_list)
+        min_unit_price = min(raw_unit_prices)
 
         def highlight_cheapest(row):
-          orig_val = prod_df.loc[row.name, "1個あたり単価"]
-          if orig_val == min_unit_price:
+          u_val = raw_unit_prices[row.name]
+          if u_val == min_unit_price:
             return ["background-color: #1b4332; color: #52b788; font-weight: bold; font-size: 1.1em;"] * len(row)
           return [""] * len(row)
 
@@ -282,17 +288,17 @@ if menu == "🔍 価格比較・検索（AIまとめ買い提案）":
             use_container_width=True,
         )
 
-        min_rows = prod_df[prod_df["1個あたり単価"] == min_unit_price]
-        if not min_rows.empty:
-          min_row = min_rows.iloc[0]
-          st.success(
-              f"🏆 **【AIまとめ買い提案！】**\n\n"
-              f"一番お得なのは **{min_row['店舗名']}** です！\n"
-              f"- **まとめ買い総額**: **{int(min_row['支払総額']):,}円** （全"
-              f" {int(min_row['まとめ数量'])} {unit_label}）\n"
-              f"- **1{unit_label}あたりの単価**: **{min_row['1個あたり単価']:.1f}円**"
-              " （コストコ・Amazon等の大容量ケース買いで最安値を達成）"
-          )
+        # 最安値の行を特定
+        min_idx = raw_unit_prices.index(min_unit_price)
+        best_row = rows[min_idx]
+        st.success(
+            f"🏆 **【AIまとめ買い提案！】**\n\n"
+            f"一番お得なのは **{best_row[0]}** です！\n"
+            f"- **まとめ買い総額**: **{int(best_row[1]):,}円** （全"
+            f" {int(best_row[2])} {unit_label}）\n"
+            f"- **1{unit_label}あたりの単価**: **{best_row[3]:.1f}円**"
+            " （コストコ・Amazon等の大容量ケース買いで最安値を達成）"
+        )
 
 # --- ② 価格・商品の登録画面 ---
 elif menu == "📝 価格・商品の登録":
@@ -300,14 +306,12 @@ elif menu == "📝 価格・商品の登録":
   st.write("ケース買いやまとめ買いの総額と数量を正確に登録できます。")
 
   conn = sqlite3.connect(DB_NAME)
-  products_df = pd.read_sql("SELECT * FROM products", conn)
-  stores_df = pd.read_sql("SELECT * FROM stores", conn)
+  cursor = conn.cursor()
+  cursor.execute("SELECT name FROM products")
+  product_names = [row[0] for row in cursor.fetchall()]
+  cursor.execute("SELECT store_name FROM stores")
+  store_names = [row[0] for row in cursor.fetchall()]
   conn.close()
-
-  product_names = (
-      products_df["name"].tolist() if not products_df.empty else []
-  )
-  store_names = stores_df["store_name"].tolist() if not stores_df.empty else []
 
   with st.form("register_form"):
     col_s1, col_s2 = st.columns(2)
