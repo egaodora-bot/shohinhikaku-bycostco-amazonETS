@@ -11,10 +11,11 @@ def init_db():
   conn = sqlite3.connect(DB_NAME)
   cursor = conn.cursor()
 
-  # 商品マスタ
+  # 商品マスタ（メーカー名カラムを追加）
   cursor.execute("""
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            maker_name TEXT,
             name TEXT NOT NULL UNIQUE,
             category TEXT,
             unit_name TEXT,
@@ -22,7 +23,7 @@ def init_db():
         )
     """)
 
-  # 価格データ（総容量＝トイレットペーパーなら総m数、お米ならkg、ティッシュなら総箱数など）
+  # 価格データ
   cursor.execute("""
         CREATE TABLE IF NOT EXISTS prices (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -51,27 +52,29 @@ def init_db():
   if cursor.fetchone()[0] == 0:
     default_products = [
         (
+            "大王製紙",
             "トイレットペーパー (ダブル)",
             "日用品",
             "m",
-            "1.5倍巻き・シングル換算や総m数で比較",
+            "1.5倍巻き・総m数で比較",
         ),
         (
+            "大王製紙",
             "ボックスティッシュ",
             "日用品",
             "箱",
             "5箱パック・1箱200組(400枚)",
         ),
-        ("お米 (5kg)", "食品", "kg", "精米 5kg"),
-        ("洗濯用液体洗剤", "日用品", "ml", "詰替用"),
+        ("一般メーカー", "お米 (5kg)", "食品", "kg", "精米 5kg"),
+        ("花王", "洗濯用液体洗剤", "日用品", "ml", "詰替用"),
     ]
-    for p_name, p_cat, p_unit, p_spec in default_products:
+    for p_maker, p_name, p_cat, p_unit, p_spec in default_products:
       cursor.execute(
           """
-                INSERT OR IGNORE INTO products (name, category, unit_name, spec_detail) 
-                VALUES (?, ?, ?, ?)
+                INSERT OR IGNORE INTO products (maker_name, name, category, unit_name, spec_detail) 
+                VALUES (?, ?, ?, ?, ?)
             """,
-          (p_name, p_cat, p_unit, p_spec),
+          (p_maker, p_name, p_cat, p_unit, p_spec),
       )
 
   cursor.execute("SELECT COUNT(*) FROM stores")
@@ -150,7 +153,7 @@ menu = st.sidebar.radio(
 if menu == "🔍 価格比較・検索":
   st.markdown("#### 🔍 商品の価格・実質単価比較")
   st.write(
-      "調べたい商品名を入力または選択してください。トイレットペーパーなどは「総メーター数(m)」などで比較すると、1.5倍巻きなどの違いによる本当の安さが分かります。"
+      "調べたい商品名を入力または選択してください。メーカー名もあわせて表示されます。"
   )
 
   conn = sqlite3.connect(DB_NAME)
@@ -159,21 +162,15 @@ if menu == "🔍 価格比較・検索":
   product_list = [row[0] for row in cursor.fetchall()]
   conn.close()
 
-  # 自由に入力もできるテキストボックス、または既存選択
-  col_search1, col_search2 = st.columns([3, 1])
-  with col_search1:
-    target_product = st.selectbox(
-        "比較したい商品を選択（または下に直接入力）",
-        product_list,
-        index=0 if product_list else 0,
-    )
-  with col_search2:
-    st.markdown("<br>", unsafe_allow_html=True)
+  target_product = st.selectbox(
+      "比較したい商品を選択（または下に直接入力）",
+      product_list,
+      index=0 if product_list else 0,
+  )
 
-  # 自由なキーワード入力もサポート
   custom_input = st.text_input(
       "または、新しい商品名やキーワードで検索・登録",
-      placeholder="例: トイレットペーパー プレミアム",
+      placeholder="例: エリエール 贅沢保湿",
   )
   if custom_input.strip():
     target_product = custom_input.strip()
@@ -182,23 +179,31 @@ if menu == "🔍 価格比較・検索":
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    # 商品が存在するか確認、なければ自動登録（初期値）
-    cursor.execute("SELECT id, spec_detail, unit_name FROM products WHERE name = ?", (target_product,))
+    cursor.execute(
+        "SELECT id, maker_name, spec_detail, unit_name FROM products WHERE name"
+        " = ?",
+        (target_product,),
+    )
     prod_row = cursor.fetchone()
 
     if not prod_row:
       cursor.execute(
-          "INSERT INTO products (name, category, unit_name, spec_detail) VALUES"
-          " (?, ?, ?, ?)",
-          (target_product, "日用品・食品", "個", "ユーザー追加商品"),
+          """
+                INSERT INTO products (maker_name, name, category, unit_name, spec_detail) 
+                VALUES (?, ?, ?, ?, ?)
+            """,
+          ("ノーブランド", target_product, "日用品・食品", "個", "ユーザー追加商品"),
       )
       conn.commit()
-      cursor.execute("SELECT id, spec_detail, unit_name FROM products WHERE name = ?", (target_product,))
+      cursor.execute(
+          "SELECT id, maker_name, spec_detail, unit_name FROM products WHERE name"
+          " = ?",
+          (target_product,),
+      )
       prod_row = cursor.fetchone()
 
-    prod_id, spec_detail, unit_name = prod_row
+    prod_id, maker_name, spec_detail, unit_name = prod_row
 
-    # 登録されている価格データを取得
     cursor.execute(
         """
             SELECT store_name, total_price, total_capacity, unit_price, updated_at
@@ -212,17 +217,21 @@ if menu == "🔍 価格比較・検索":
     conn.close()
 
     st.markdown("---")
-    st.markdown(f"##### 📦 選択中商品: **{target_product}**")
-    st.markdown(f"**📝 スペック・備考**: `{spec_detail}` | **基準単位**: `{unit_name}`")
+    st.markdown(
+        f"##### 📦 選択中商品: **[{maker_name if maker_name else 'メーカー不明'}]"
+        f" {target_product}**"
+    )
+    st.markdown(
+        f"**🏷️ メーカー**: `{maker_name}` | **📝 スペック**: `{spec_detail}` |"
+        f" **基準単位**: `{unit_name}`"
+    )
     st.markdown("---")
     st.markdown("##### 📊 各店舗の価格・実質単価比較")
 
     if not rows:
       st.info(
           f"💡 「{target_product}」の価格データがまだ登録されていません。「📝"
-      )
-      st.info(
-          " 価格・商品の登録」メニューから各店舗の価格と総容量（総m数や個数など）を登録してください。"
+          " 価格・商品の登録」メニューから価格と総容量を登録してください。"
       )
     else:
       data_list = []
@@ -266,7 +275,7 @@ if menu == "🔍 価格比較・検索":
 elif menu == "📝 価格・商品の登録":
   st.markdown("#### 📝 店舗ごとの価格・容量の手動登録")
   st.write(
-      "トイレットペーパーの「1.5倍巻き（総◯m）」や、ケース売りの正確な総額と数量を登録できます。"
+      "メーカー名や商品名、総m数（トイレットペーパー等）を入力して正確に登録できます。"
   )
 
   conn = sqlite3.connect(DB_NAME)
@@ -289,30 +298,36 @@ elif menu == "📝 価格・商品の登録":
       )
 
     st.markdown("---")
-    col_p1, col_p2, col_p3, col_p4, col_p5 = st.columns([3, 2, 2, 2, 1])
+    col_p1, col_p2, col_p3 = st.columns(3)
     with col_p1:
+      maker_input = st.text_input(
+          "メーカー名（ブランド名）", placeholder="例: エリエール, 花王"
+      )
+    with col_p2:
       p_choice = st.selectbox(
           "商品を選択", product_names + ["【＋新しい商品を追加】"]
       )
-      p_custom = st.text_input("※新しい商品名", placeholder="商品名を入力")
-    with col_p2:
+    with col_p3:
+      p_custom = st.text_input(
+          "※新しい商品名", placeholder="商品名を入力（例: 贅沢保湿）"
+      )
+
+    col_v1, col_v2, col_v3 = st.columns(3)
+    with col_v1:
       price_val = st.number_input(
           "支払総額 (円)", min_value=0.0, step=10.0, value=1280.0
       )
-    with col_p3:
-      # トイレットペーパーなら総m数（例: 72ロール×25m = 1800m 等）を入力すると正確に比較できます
+    with col_v2:
       capacity_val = st.number_input(
           "総容量・数量（例: 総m数や個数）",
           min_value=0.1,
           step=1.0,
           value=100.0,
       )
-    with col_p4:
+    with col_v3:
       unit_val = st.selectbox(
           "単位（計算の基準）", ["m", "個", "箱", "ロール", "kg", "ml"]
       )
-    with col_p5:
-      st.markdown("<br>", unsafe_allow_html=True)
 
     submitted = st.form_submit_button("💾 この価格データを保存する")
 
@@ -327,6 +342,7 @@ elif menu == "📝 価格・商品の登録":
           if p_choice == "【＋新しい商品を追加】"
           else p_choice
       )
+      final_maker = maker_input.strip() if maker_input.strip() else "ノーブランド"
 
       if not target_store:
         st.error("⚠️ 店舗名を入力してください。")
@@ -338,7 +354,6 @@ elif menu == "📝 価格・商品の登録":
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
 
-        # 店舗の自動追加
         cursor.execute("SELECT id FROM stores WHERE store_name = ?", (target_store,))
         if not cursor.fetchone():
           cursor.execute(
@@ -347,29 +362,31 @@ elif menu == "📝 価格・商品の登録":
           )
           conn.commit()
 
-        # 商品の自動追加・取得
         cursor.execute("SELECT id FROM products WHERE name = ?", (final_product,))
         p_row = cursor.fetchone()
         if p_row:
           prod_id = p_row[0]
+          # メーカー名が更新されていればアップデート
+          cursor.execute(
+              "UPDATE products SET maker_name = ? WHERE id = ?",
+              (final_maker, prod_id),
+          )
         else:
           cursor.execute(
               """
-                    INSERT INTO products (name, category, unit_name, spec_detail) 
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO products (maker_name, name, category, unit_name, spec_detail) 
+                    VALUES (?, ?, ?, ?, ?)
                 """,
-              (final_product, "日用品・食品", unit_val, "ユーザー登録商品"),
+              (final_maker, final_product, "日用品・食品", unit_val, "ユーザー登録商品"),
           )
           conn.commit()
           prod_id = cursor.lastrowid
 
-        # 単位あたり単価の計算（総額 ÷ 総容量）
         unit_price = (
             price_val / capacity_val if capacity_val > 0 else price_val
         )
         today = datetime.date.today().isoformat()
 
-        # 既存の同店舗・同商品の価格があれば更新、なければ挿入
         cursor.execute(
             """
                 SELECT id FROM prices WHERE product_id = ? AND store_name = ?
@@ -413,9 +430,10 @@ elif menu == "📝 価格・商品の登録":
         conn.close()
 
         st.success(
-            f"✨ 【{target_store}】の「{final_product}」（総額"
-            f" {int(price_val):,}円 / {capacity_val:g} {unit_val}）を保存しました！（1"
-            f"{unit_val}あたり {unit_price:.2f}円）"
+            f"✨ 【{target_store}】の「[{final_maker}]"
+            f" {final_product}」（総額 {int(price_val):,}円 / {capacity_val:g}"
+            f" {unit_val}）を保存しました！（1{unit_val}あたり"
+            f" {unit_price:.2f}円）"
         )
 
 # --- ③ 店舗・商品マスタ管理画面 ---
@@ -436,7 +454,7 @@ elif menu == "⚙️ 店舗・商品マスタ管理":
     conn = sqlite3.connect(DB_NAME)
     products_df = pd.read_sql(
         """
-            SELECT name as 商品名, category as カテゴリ, unit_name as 基準単位, spec_detail as スペック備考 
+            SELECT maker_name as メーカー名, name as 商品名, category as カテゴリ, unit_name as 基準単位, spec_detail as スペック備考 
             FROM products
         """,
         conn,
