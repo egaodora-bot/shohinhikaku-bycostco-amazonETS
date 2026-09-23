@@ -4,7 +4,7 @@ import sqlite3
 import pandas as pd
 import streamlit as st
 
-# データベースの初期化（構造が変わった際に自動で再構築する安全設計）
+# データベースの初期化（構造変更時に自動再構築してエラーを防ぐ）
 DB_NAME = "database.db"
 
 
@@ -12,9 +12,14 @@ def init_db():
   conn = sqlite3.connect(DB_NAME)
   cursor = conn.cursor()
 
-  # テーブルが存在しない、または旧構造の場合は作り直すため一度ドロップまたは確認
+  # 安全のため、旧テーブルを削除して最新の構造で再作成する
+  cursor.execute("DROP TABLE IF EXISTS prices")
+  cursor.execute("DROP TABLE IF EXISTS products")
+  cursor.execute("DROP TABLE IF EXISTS stores")
+
+  # 商品マスタ
   cursor.execute("""
-        CREATE TABLE IF NOT EXISTS products (
+        CREATE TABLE products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE,
             category TEXT,
@@ -22,8 +27,9 @@ def init_db():
         )
     """)
 
+  # 価格データ
   cursor.execute("""
-        CREATE TABLE IF NOT EXISTS prices (
+        CREATE TABLE prices (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             product_id INTEGER,
             store_type TEXT,
@@ -37,8 +43,9 @@ def init_db():
         )
     """)
 
+  # 店舗マスタ
   cursor.execute("""
-        CREATE TABLE IF NOT EXISTS stores (
+        CREATE TABLE stores (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             store_name TEXT UNIQUE,
             store_type TEXT,
@@ -47,40 +54,35 @@ def init_db():
     """)
 
   # 初期データの投入（商品）
-  cursor.execute("SELECT COUNT(*) FROM products")
-  if cursor.fetchone()[0] == 0:
-    default_products = [
-        ("ボックスティッシュ (60箱ケース)", "日用品（消耗品）", "箱"),
-        ("トイレットペーパー (ダブル・72ロール)", "日用品（消耗品）", "ロール"),
-        ("洗濯用液体洗剤 (業務用詰替)", "日用品（消耗品）", "ml"),
-        ("お米 (5kg)", "食品・飲料", "kg"),
-        ("牛乳 (1L)", "食品・飲料", "本"),
-    ]
-    for p_name, p_cat, p_unit in default_products:
-      cursor.execute(
-          "INSERT OR IGNORE INTO products (name, category, unit_name) VALUES"
-          " (?, ?, ?)",
-          (p_name, p_cat, p_unit),
-      )
+  default_products = [
+      ("ボックスティッシュ (60箱ケース)", "日用品（消耗品）", "箱"),
+      ("トイレットペーパー (ダブル・72ロール)", "日用品（消耗品）", "ロール"),
+      ("洗濯用液体洗剤 (業務用詰替)", "日用品（消耗品）", "ml"),
+      ("お米 (5kg)", "食品・飲料", "kg"),
+      ("牛乳 (1L)", "食品・飲料", "本"),
+  ]
+  for p_name, p_cat, p_unit in default_products:
+    cursor.execute(
+        "INSERT INTO products (name, category, unit_name) VALUES (?, ?, ?)",
+        (p_name, p_cat, p_unit),
+    )
 
   # 初期データの投入（店舗）
-  cursor.execute("SELECT COUNT(*) FROM stores")
-  if cursor.fetchone()[0] == 0:
-    default_stores = [
-        ("コストコ 明和倉庫店", "コストコ", 1),
-        ("コストコ 壬生倉庫店", "コストコ", 1),
-        ("Amazon（定期おトク便・まとめ買い）", "Amazon", 1),
-        ("カインズ（近隣店）", "近隣店舗", 1),
-        ("コスモス（近隣店）", "近隣店舗", 1),
-        ("ウエルシア（近隣店）", "近隣店舗", 1),
-        ("ベイシア（近隣店）", "近隣店舗", 1),
-    ]
-    for s_name, s_type, s_active in default_stores:
-      cursor.execute(
-          "INSERT OR IGNORE INTO stores (store_name, store_type, is_active) VALUES"
-          " (?, ?, ?)",
-          (s_name, s_type, s_active),
-      )
+  default_stores = [
+      ("コストコ 明和倉庫店", "コストコ", 1),
+      ("コストコ 壬生倉庫店", "コストコ", 1),
+      ("Amazon（定期おトク便・まとめ買い）", "Amazon", 1),
+      ("カインズ（近隣店）", "近隣店舗", 1),
+      ("コスモス（近隣店）", "近隣店舗", 1),
+      ("ウエルシア（近隣店）", "近隣店舗", 1),
+      ("ベイシア（近隣店）", "近隣店舗", 1),
+  ]
+  for s_name, s_type, s_active in default_stores:
+    cursor.execute(
+        "INSERT INTO stores (store_name, store_type, is_active) VALUES (?, ?,"
+        " ?)",
+        (s_name, s_type, s_active),
+    )
 
   conn.commit()
   conn.close()
@@ -170,7 +172,7 @@ def fetch_and_register_prices(product_name):
   for store_name in active_stores:
     rate = 0.95
     if "コストコ" in store_name:
-      rate = 0.72  # コストコは大容量まとめ買いで圧倒的に安く設定
+      rate = 0.72  # コストコは大容量まとめ買いで非常に安く設定
     elif "Amazon" in store_name:
       rate = 0.82  # Amazonまとめ買い・定期便
     elif "ウエルシア" in store_name:
@@ -182,42 +184,21 @@ def fetch_and_register_prices(product_name):
     calculated_unit_price = round(item_total_price / total_qty, 2)
 
     cursor.execute(
-        "SELECT id FROM prices WHERE product_id = ? AND store_name = ?",
-        (prod_id, store_name),
+        """
+            INSERT INTO prices (product_id, store_type, store_name, total_price, total_capacity, unit_price, is_sale, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            prod_id,
+            "近隣店舗",
+            store_name,
+            item_total_price,
+            total_qty,
+            calculated_unit_price,
+            0,
+            today,
+        ),
     )
-    existing = cursor.fetchone()
-
-    if existing:
-      cursor.execute(
-          """
-                UPDATE prices SET total_price = ?, total_capacity = ?, unit_price = ?, updated_at = ?
-                WHERE id = ?
-            """,
-          (
-              item_total_price,
-              total_qty,
-              calculated_unit_price,
-              existing[0],
-              today,
-          ),
-      )
-    else:
-      cursor.execute(
-          """
-                INSERT INTO prices (product_id, store_type, store_name, total_price, total_capacity, unit_price, is_sale, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-          (
-              prod_id,
-              "近隣店舗",
-              store_name,
-              item_total_price,
-              total_qty,
-              calculated_unit_price,
-              0,
-              today,
-          ),
-      )
 
   conn.commit()
   conn.close()
@@ -408,36 +389,21 @@ elif menu == "📝 価格・商品の登録":
         today = datetime.date.today().isoformat()
 
         cursor.execute(
-            "SELECT id FROM prices WHERE product_id = ? AND store_name = ?",
-            (prod_id, target_store),
+            """
+                INSERT INTO prices (product_id, store_type, store_name, total_price, total_capacity, unit_price, is_sale, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                prod_id,
+                "近隣店舗",
+                target_store,
+                price_val,
+                qty_val,
+                unit_price,
+                0,
+                today,
+            ),
         )
-        p_exist = cursor.fetchone()
-
-        if p_exist:
-          cursor.execute(
-              """
-                    UPDATE prices SET total_price = ?, total_capacity = ?, unit_price = ?, updated_at = ?
-                    WHERE id = ?
-                """,
-              (price_val, qty_val, unit_price, p_exist[0], today),
-          )
-        else:
-          cursor.execute(
-              """
-                    INSERT INTO prices (product_id, store_type, store_name, total_price, total_capacity, unit_price, is_sale, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-              (
-                  prod_id,
-                  "近隣店舗",
-                  target_store,
-                  price_val,
-                  qty_val,
-                  unit_price,
-                  0,
-                  today,
-              ),
-          )
         conn.commit()
         conn.close()
 
