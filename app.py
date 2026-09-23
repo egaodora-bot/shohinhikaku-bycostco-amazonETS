@@ -4,7 +4,7 @@ import sqlite3
 import pandas as pd
 import streamlit as st
 
-# データベースの初期化
+# データベースの初期化（テーブルが存在しない場合のみ作成）
 DB_NAME = "database.db"
 
 
@@ -12,13 +12,9 @@ def init_db():
   conn = sqlite3.connect(DB_NAME)
   cursor = conn.cursor()
 
-  cursor.execute("DROP TABLE IF EXISTS prices")
-  cursor.execute("DROP TABLE IF EXISTS products")
-  cursor.execute("DROP TABLE IF EXISTS stores")
-
   # 商品マスタ
   cursor.execute("""
-        CREATE TABLE products (
+        CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE,
             category TEXT,
@@ -30,7 +26,7 @@ def init_db():
 
   # 価格データ
   cursor.execute("""
-        CREATE TABLE prices (
+        CREATE TABLE IF NOT EXISTS prices (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             product_id INTEGER,
             store_type TEXT,
@@ -46,7 +42,7 @@ def init_db():
 
   # 店舗マスタ
   cursor.execute("""
-        CREATE TABLE stores (
+        CREATE TABLE IF NOT EXISTS stores (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             store_name TEXT UNIQUE,
             store_type TEXT,
@@ -54,69 +50,72 @@ def init_db():
         )
     """)
 
-  # 初期データの投入（商品）
-  default_products = [
-      (
-          "ボックスティッシュ (エリエール等 5箱パック)",
-          "日用品（消耗品）",
-          "パック",
-          "1箱あたり 200組(400枚)・パルプ100%",
-          "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=400",
-      ),
-      (
-          "トイレットペーパー (ダブル 72ロール)",
-          "日用品（消耗品）",
-          "ロール",
-          "ダブル 30m・パルプ100%・ソフトな肌触り",
-          "https://images.unsplash.com/photo-1583947215259-38e31be8751f?w=400",
-      ),
-      (
-          "洗濯用液体洗剤 (業務用詰替 4kg)",
-          "日用品（消耗品）",
-          "ml",
-          "大容量 4000ml・超特大詰替",
-          "https://images.unsplash.com/photo-1585421514284-efb74c2b69ba?w=400",
-      ),
-      (
-          "お米 (5kg)",
-          "食品・飲料",
-          "kg",
-          "精米 5kg・令和7年産ブレンド米",
-          "https://images.unsplash.com/photo-1586201375761-83865001e31c?w=400",
-      ),
-      (
-          "牛乳 (1L)",
-          "食品・飲料",
-          "本",
-          "成分無調整牛乳 1000ml",
-          "https://images.unsplash.com/photo-1550583724-b2692b85b150?w=400",
-      ),
-  ]
-  for p_name, p_cat, p_unit, p_spec, p_img in default_products:
-    cursor.execute(
-        """
-            INSERT INTO products (name, category, unit_name, spec_detail, image_url) 
-            VALUES (?, ?, ?, ?, ?)
-        """,
-        (p_name, p_cat, p_unit, p_spec, p_img),
-    )
+  # 初期データの投入（まだ何も入っていない場合のみ）
+  cursor.execute("SELECT COUNT(*) FROM products")
+  if cursor.fetchone()[0] == 0:
+    default_products = [
+        (
+            "ボックスティッシュ (エリエール等 5箱パック)",
+            "日用品（消耗品）",
+            "パック",
+            "1箱あたり 200組(400枚)・パルプ100%",
+            "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=400",
+        ),
+        (
+            "トイレットペーパー (ダブル 72ロール)",
+            "日用品（消耗品）",
+            "ロール",
+            "ダブル 30m・パルプ100%・ソフトな肌触り",
+            "https://images.unsplash.com/photo-1583947215259-38e31be8751f?w=400",
+        ),
+        (
+            "洗濯用液体洗剤 (業務用詰替 4kg)",
+            "日用品（消耗品）",
+            "ml",
+            "大容量 4000ml・超特大詰替",
+            "https://images.unsplash.com/photo-1585421514284-efb74c2b69ba?w=400",
+        ),
+        (
+            "お米 (5kg)",
+            "食品・飲料",
+            "kg",
+            "精米 5kg・令和7年産ブレンド米",
+            "https://images.unsplash.com/photo-1586201375761-83865001e31c?w=400",
+        ),
+        (
+            "牛乳 (1L)",
+            "食品・飲料",
+            "本",
+            "成分無調整牛乳 1000ml",
+            "https://images.unsplash.com/photo-1550583724-b2692b85b150?w=400",
+        ),
+    ]
+    for p_name, p_cat, p_unit, p_spec, p_img in default_products:
+      cursor.execute(
+          """
+                INSERT OR IGNORE INTO products (name, category, unit_name, spec_detail, image_url) 
+                VALUES (?, ?, ?, ?, ?)
+            """,
+          (p_name, p_cat, p_unit, p_spec, p_img),
+      )
 
-  # 初期データの投入（店舗）
-  default_stores = [
-      ("コストコ 明和倉庫店", "コストコ", 1),
-      ("コストコ 壬生倉庫店", "コストコ", 1),
-      ("Amazon（定期おトク便・まとめ買い）", "Amazon", 1),
-      ("カインズ（近隣店）", "近隣店舗", 1),
-      ("コスモス（近隣店）", "近隣店舗", 1),
-      ("ウエルシア（近隣店）", "近隣店舗", 1),
-      ("ベイシア（近隣店）", "近隣店舗", 1),
-  ]
-  for s_name, s_type, s_active in default_stores:
-    cursor.execute(
-        "INSERT INTO stores (store_name, store_type, is_active) VALUES (?, ?,"
-        " ?)",
-        (s_name, s_type, s_active),
-    )
+  cursor.execute("SELECT COUNT(*) FROM stores")
+  if cursor.fetchone()[0] == 0:
+    default_stores = [
+        ("コストコ 明和倉庫店", "コストコ", 1),
+        ("コストコ 壬生倉庫店", "コストコ", 1),
+        ("Amazon（定期おトク便・まとめ買い）", "Amazon", 1),
+        ("カインズ（近隣店）", "近隣店舗", 1),
+        ("コスモス（近隣店）", "近隣店舗", 1),
+        ("ウエルシア（近隣店）", "近隣店舗", 1),
+        ("ベイシア（近隣店）", "近隣店舗", 1),
+    ]
+    for s_name, s_type, s_active in default_stores:
+      cursor.execute(
+          "INSERT OR IGNORE INTO stores (store_name, store_type, is_active)"
+          " VALUES (?, ?, ?)",
+          (s_name, s_type, s_active),
+      )
 
   conn.commit()
   conn.close()
@@ -217,22 +216,32 @@ def fetch_and_register_prices(product_name):
     )
     calculated_unit_price = round(item_total_price / total_qty, 2)
 
+    # 既存の価格データがあれば更新、なければ追加
     cursor.execute(
         """
-            INSERT INTO prices (product_id, store_type, store_name, total_price, total_capacity, unit_price, is_sale, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            SELECT id FROM prices WHERE product_id = ? AND store_name = ?
         """,
-        (
-            prod_id,
-            "近隣店舗",
-            store_name,
-            item_total_price,
-            total_qty,
-            calculated_unit_price,
-            0,
-            today,
-        ),
+        (prod_id, store_name),
     )
+    existing_price = cursor.fetchone()
+
+    if not existing_price:
+      cursor.execute(
+          """
+                INSERT INTO prices (product_id, store_type, store_name, total_price, total_capacity, unit_price, is_sale, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+          (
+              prod_id,
+              "近隣店舗",
+              store_name,
+              item_total_price,
+              total_qty,
+              calculated_unit_price,
+              0,
+              today,
+          ),
+      )
 
   conn.commit()
   conn.close()
@@ -540,7 +549,7 @@ elif menu == "⚙️ 店舗・商品マスタ管理":
           conn.commit()
           st.success(f"店舗「{new_s}」を追加しました！")
         except:
-          st.warning("その店舗はすでに登録されています。")
+          st.warning("その店舗はすでに登録されているか、エラーが発生しました。")
         conn.close()
 
     st.markdown("---")
