@@ -48,21 +48,18 @@ def init_db():
         )
     """)
 
-  # 初期データの投入（商品）
+  # 初期データの投入（商品・単位を「箱」「パック」などに最適化）
   cursor.execute("SELECT COUNT(*) FROM products")
   if cursor.fetchone()[0] == 0:
     default_products = [
-        ("トイレットペーパー (ダブル)", "日用品（消耗品）", "m"),
-        ("ボックスティッシュ", "日用品（消耗品）", "箱"),
-        ("洗濯用液体洗剤", "日用品（消耗品）", "ml"),
-        ("食器用中性洗剤", "日用品（消耗品）", "ml"),
-        ("入浴剤 バブ", "日用品（消耗品）", "錠"),
-        ("キャッツビーフェイスタオル", "日用品（消耗品）", "枚"),
-        ("単3電池 / 単4電池", "家電・ガジェット", "本"),
-        ("不織布マスク", "日用品（消耗品）", "枚"),
-        ("衣料用洗剤", "日用品（消耗品）", "ml"),
-        ("ボディソープ・石鹸", "日用品（消耗品）", "個"),
-        ("お米 (5kg)", "食品・飲料", "kg"),
+        ("ボックスティッシュ (5箱パック)", "日用品（消耗品）", "パック"),
+        ("トイレットペーパー (ダブル・12ロール)", "日用品（消耗品）", "パック"),
+        ("洗濯用液体洗剤", "日用品（消耗品）", "本"),
+        ("食器用中性洗剤", "日用品（消耗品）", "本"),
+        ("入浴剤 バブ", "日用品（消耗品）", "箱"),
+        ("単3電池 (12本パック)", "家電・ガジェット", "パック"),
+        ("不織布マスク (50枚入り)", "日用品（消耗品）", "箱"),
+        ("お米 (5kg)", "食品・飲料", "袋"),
         ("牛乳 (1L)", "食品・飲料", "本"),
     ]
     for p_name, p_cat, p_unit in default_products:
@@ -163,7 +160,6 @@ def fetch_and_register_prices(product_name):
   )
   count = cursor.fetchone()[0]
 
-  # データがない場合、または最新化のために店舗ごとのリアルタイム想定価格を自動生成して登録
   stores_to_check = [
       ("Amazon（定期おトク便）", 0.90),
       ("コストコ 壬生倉庫店", 0.80),
@@ -178,16 +174,16 @@ def fetch_and_register_prices(product_name):
   capacity = 1.0
   if "お米" in product_name:
     base_price = 2100
-    capacity = 5.0
+    capacity = 1.0
   elif "トイレットペーパー" in product_name:
-    base_price = 680
-    capacity = 50.0
+    base_price = 650
+    capacity = 1.0
   elif "ボックスティッシュ" in product_name:
-    base_price = 380
-    capacity = 5.0
+    base_price = 350
+    capacity = 1.0
   elif "洗濯用液体洗剤" in product_name:
     base_price = 450
-    capacity = 900.0
+    capacity = 1.0
   elif "牛乳" in product_name:
     base_price = 220
     capacity = 1.0
@@ -197,7 +193,6 @@ def fetch_and_register_prices(product_name):
   # まだデータがなければ店舗別に価格を自動生成して登録
   if count == 0:
     for store_name, rate in stores_to_check:
-      # ストアが存在するか確認・追加
       cursor.execute(
           "SELECT id FROM stores WHERE store_name = ?", (store_name,)
       )
@@ -208,11 +203,8 @@ def fetch_and_register_prices(product_name):
             (store_name, "近隣店舗", 1),
         )
 
-      # リアルタイム感を出すために少しランダムな変動を加える
       actual_price = round(base_price * rate * random.uniform(0.95, 1.05), 1)
-      unit_price = (
-          actual_price / capacity if capacity > 0 else actual_price
-      )
+      unit_price = actual_price  # パックや箱ごとの比較のため総額をそのまま単位価格とする
 
       cursor.execute(
           """
@@ -256,23 +248,20 @@ if menu == "🔍 価格比較・検索（調べて比較）":
       search_btn = st.form_submit_button("🔍 最新価格を調べて比較する")
 
     if search_btn or target_product:
-      # ボタンが押されたら価格を自動で調べて反映する
       if search_btn:
         fetch_and_register_prices(target_product)
 
       conn = sqlite3.connect(DB_NAME)
       query = """
                 SELECT 
-                    p.name as 商品名, 
                     pr.store_name as 店舗名, 
-                    pr.total_price as 総額, 
-                    pr.unit_price as 単位あたり価格, 
+                    pr.total_price as 価格, 
                     p.unit_name as 単位,
                     pr.updated_at as 更新日
                 FROM prices pr
                 JOIN products p ON pr.product_id = p.id
                 WHERE p.name = ?
-                ORDER BY pr.unit_price ASC
+                ORDER BY pr.total_price ASC
             """
       prod_df = pd.read_sql(query, conn, params=(target_product,))
       conn.close()
@@ -285,11 +274,11 @@ if menu == "🔍 価格比較・検索（調べて比較）":
             " 最新価格を調べて比較する」ボタンを押してください。"
         )
       else:
-        # 最安値を緑色背景で強調ハイライト
-        min_price = prod_df["単位あたり価格"].min()
+        # 最安値を緑色背景で強調ハイライト（エラー防止のため安全にインデックス参照）
+        min_price = prod_df["価格"].min()
 
         def highlight_cheapest(row):
-          if row["単位あたり価格"] == min_price:
+          if row["価格"] == min_price:
             return ["background-color: #1b4332; color: #52b788; font-weight: bold; font-size: 1.1em;"] * len(row)
           return [""] * len(row)
 
@@ -298,16 +287,20 @@ if menu == "🔍 価格比較・検索（調べて比較）":
             use_container_width=True,
         )
 
-        min_row = prod_df.iloc[0]
-        st.success(
-            f"🏆 **【最安値！】** **{min_row['店舗名']}** （1{min_row['単位']}あたり"
-            f" **{min_row['unit_price']:.2f}円** / 総額: {min_row['総額']}円）が一番お得です！"
-        )
+        min_rows = prod_df[prod_df["価格"] == min_price]
+        if not min_rows.empty:
+          min_row = min_rows.iloc[0]
+          st.success(
+              f"🏆 **【最安値！】** **{min_row['店舗名']}** （**{min_row['価格']}円** /"
+              f" {min_row['単位']}）が一番お得です！"
+          )
 
 # --- ② 価格・商品の登録画面 ---
 elif menu == "📝 価格・商品の登録":
   st.markdown("#### 📝 各店舗の価格の手動登録・更新")
-  st.write("チラシの特売情報などをご自身で正確に登録したい場合はこちらから行えます。")
+  st.write(
+      "チラシの特売情報などを箱単位・パック単位で正確に登録したい場合はこちらから行えます。"
+  )
 
   conn = sqlite3.connect(DB_NAME)
   products_df = pd.read_sql("SELECT * FROM products", conn)
@@ -331,18 +324,18 @@ elif menu == "📝 価格・商品の登録":
       )
 
     st.markdown("---")
-    col_p1, col_p2, col_p3, col_p4 = st.columns([3, 2, 2, 1])
+    col_p1, col_p2, col_p3 = st.columns([3, 2, 2])
     with col_p1:
       p_choice = st.selectbox(
           "商品を選ぶ", product_names + ["【＋新しい商品を追加】"]
       )
       p_custom = st.text_input("※新しい商品名", placeholder="商品名を入力")
     with col_p2:
-      price_val = st.number_input("総額 (円)", min_value=0.0, step=10.0)
+      price_val = st.number_input(
+          "価格・総額 (円)", min_value=0.0, step=10.0, value=350.0
+      )
     with col_p3:
-      cap_val = st.number_input("容量・数量", min_value=0.1, value=1.0)
-    with col_p4:
-      unit_val = st.text_input("単位", value="個")
+      unit_val = st.text_input("単位 (例: 箱, パック, 袋)", value="パック")
 
     submitted = st.form_submit_button("💾 この価格データを保存する")
 
@@ -363,7 +356,7 @@ elif menu == "📝 価格・商品の登録":
       elif not final_product:
         st.error("⚠️ 商品名を選択または入力してください。")
       elif price_val <= 0:
-        st.error("⚠️ 総額（円）を正しく入力してください。")
+        st.error("⚠️ 価格を正しく入力してください。")
       else:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -390,7 +383,6 @@ elif menu == "📝 価格・商品の登録":
           conn.commit()
           prod_id = cursor.lastrowid
 
-        unit_price = price_val / cap_val if cap_val > 0 else 0
         today = datetime.date.today().isoformat()
 
         cursor.execute(
@@ -403,8 +395,8 @@ elif menu == "📝 価格・商品の登録":
                 "近隣店舗",
                 target_store,
                 price_val,
-                cap_val,
-                unit_price,
+                1.0,
+                price_val,
                 0,
                 today,
             ),
@@ -443,8 +435,10 @@ elif menu == "⚙️ 店舗・商品マスタ管理":
 
   with tab2:
     st.markdown("##### 🛍️ 新規商品の追加")
-    new_p = st.text_input("追加する商品名", placeholder="例: 柔軟剤 〇〇")
-    new_u = st.text_input("単位（例: ml, 個, m, 本）", value="個")
+    new_p = st.text_input(
+        "追加する商品名", placeholder="例: ボックスティッシュ (5箱パック)"
+    )
+    new_u = st.text_input("単位（例: 箱, パック, 袋, 本）", value="パック")
     if st.button("商品を追加する"):
       if new_p:
         conn = sqlite3.connect(DB_NAME)
