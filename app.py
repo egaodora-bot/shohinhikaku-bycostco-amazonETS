@@ -166,10 +166,15 @@ if menu == "🔍 価格比較・検索":
   all_products = cursor.fetchall()
   conn.close()
 
-  # 選択肢用のリストを作成（「メーカー名: 商品名」の形式）
-  prod_options = {
-      f"[{p[1] if p[1] else 'ノーブランド'}] {p[2]}": p[0] for p in all_products
-  }
+  # 選択肢用のリストを作成（メーカー名がある場合は「[メーカー] 商品名」、ない場合は「商品名」のみにする）
+  prod_options = {}
+  for p in all_products:
+    p_id, m_name, p_name = p[0], p[1], p[2]
+    if m_name and m_name.strip() and m_name != "ノーブランド":
+      label = f"[{m_name}] {p_name}"
+    else:
+      label = p_name
+    prod_options[label] = p_id
 
   selected_label = st.selectbox(
       "登録済み商品から選択して比較",
@@ -200,14 +205,24 @@ if menu == "🔍 価格比較・検索":
     rows = cursor.fetchall()
     conn.close()
 
+    display_maker_prefix = (
+        f"[{maker_name}] "
+        if maker_name and maker_name.strip() and maker_name != "ノーブランド"
+        else ""
+    )
+
     st.markdown("---")
     st.markdown(
-        f"##### 📦 選択中商品: **[{maker_name if maker_name else 'ノーブランド'}]"
-        f" {target_product}**"
+        f"##### 📦 選択中商品: **{display_maker_prefix}{target_product}**"
+    )
+    maker_display_text = (
+        maker_name
+        if maker_name and maker_name.strip()
+        else "（未設定・ノーブランド）"
     )
     st.markdown(
-        f"**🏷️ メーカー**: `{maker_name}` | **📝 スペック**: `{spec_detail}` |"
-        f" **基準単位**: `{unit_name}`"
+        f"**🏷️ メーカー**: `{maker_display_text}` | **📝 スペック**:"
+        f" `{spec_detail}` | **基準単位**: `{unit_name}`"
     )
     st.markdown("---")
     st.markdown("##### 📊 各店舗の価格・実質単価比較")
@@ -237,7 +252,12 @@ if menu == "🔍 価格比較・検索":
       def highlight_cheapest(row):
         u_val = raw_unit_prices[row.name]
         if u_val == min_unit_price:
-          return ["background-color: #1b4332; color: #52b788; font-weight: bold; font-size: 1.1em;"] * len(row)
+          return [
+              (
+                  "background-color: #1b4332; color: #52b788; font-weight: bold;"
+                  " font-size: 1.1em;"
+              )
+          ] * len(row)
         return [""] * len(row)
 
       st.dataframe(
@@ -285,7 +305,8 @@ elif menu == "📝 価格・商品の登録":
     col_p1, col_p2, col_p3 = st.columns(3)
     with col_p1:
       maker_input = st.text_input(
-          "メーカー名（ブランド名）", placeholder="例: エリエール, 花王"
+          "メーカー名（ブランド名 ※任意）",
+          placeholder="例: エリエール, 花王 （なしは空欄）",
       )
     with col_p2:
       p_choice = st.selectbox(
@@ -326,7 +347,7 @@ elif menu == "📝 価格・商品の登録":
           if p_choice == "【＋新しい商品を追加】"
           else p_choice
       )
-      final_maker = maker_input.strip() if maker_input.strip() else "ノーブランド"
+      final_maker = maker_input.strip() if maker_input.strip() else None
 
       if not target_store:
         st.error("⚠️ 店舗名を入力してください。")
@@ -360,7 +381,13 @@ elif menu == "📝 価格・商品の登録":
                     INSERT INTO products (maker_name, name, category, unit_name, spec_detail) 
                     VALUES (?, ?, ?, ?, ?)
                 """,
-              (final_maker, final_product, "日用品・食品", unit_val, "ユーザー登録商品"),
+              (
+                  final_maker,
+                  final_product,
+                  "日用品・食品",
+                  unit_val,
+                  "ユーザー登録商品",
+              ),
           )
           conn.commit()
           prod_id = cursor.lastrowid
@@ -396,9 +423,9 @@ elif menu == "📝 価格・商品の登録":
         else:
           cursor.execute(
               """
-                    INSERT INTO prices (product_id, store_name, total_price, total_capacity, unit_price, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """,
+                INSERT INTO prices (product_id, store_name, total_price, total_capacity, unit_price, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """,
               (
                   prod_id,
                   target_store,
@@ -412,9 +439,10 @@ elif menu == "📝 価格・商品の登録":
         conn.commit()
         conn.close()
 
+        maker_display_str = f"[{final_maker}] " if final_maker else ""
         st.success(
-            f"✨ 【{target_store}】の「[{final_maker}]"
-            f" {final_product}」（総額 {int(price_val):,}円 / {capacity_val:g}"
+            f"✨ 【{target_store}】の「{maker_display_str}{final_product}」（総額"
+            f" {int(price_val):,}円 / {capacity_val:g}"
             f" {unit_val}）を保存しました！（1{unit_val}あたり"
             f" {unit_price:.2f}円）"
         )
@@ -428,7 +456,9 @@ elif menu == "⚙️ 店舗・商品マスタ管理":
   with tab1:
     st.markdown("##### 📋 登録されている店舗一覧")
     conn = sqlite3.connect(DB_NAME)
-    stores_df = pd.read_sql("SELECT store_name as 店舗名, store_type as 分類 FROM stores", conn)
+    stores_df = pd.read_sql(
+        "SELECT store_name as 店舗名, store_type as 分類 FROM stores", conn
+    )
     conn.close()
     st.dataframe(stores_df, use_container_width=True)
 
