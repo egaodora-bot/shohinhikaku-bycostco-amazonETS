@@ -37,7 +37,7 @@ def init_db():
         )
     """)
 
-  # 店舗マスタ（自動提案・選択用）
+  # 店舗マスタ
   cursor.execute("""
         CREATE TABLE IF NOT EXISTS stores (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,13 +68,12 @@ def init_db():
         (p_name, p_cat, p_unit),
     )
 
-  # デフォルト店舗の初期データ（例：Amazon、コストコ＋近隣の想定店舗）
+  # デフォルト店舗の初期データ
   default_stores = [
       ("Amazon（定期おトク便）", "Amazon", 1),
       ("コストコ つくば倉庫店", "コストコ", 1),
       ("ウエルシア（近隣店）", "近隣店舗", 1),
       ("カインズ（近隣店）", "近隣店舗", 1),
-      ("ベイシア（近隣店）", "近隣店舗", 0),
   ]
   for s_name, s_type, s_active in default_stores:
     cursor.execute(
@@ -100,9 +99,11 @@ st.caption(
     "リポジトリ: `shohinhikaku-bycostco-amazonETS` | 住所連動・4店舗横並び買い回り比較"
 )
 
-# サイドバー：メニュー選択
-menu = st.sidebar.selectbox(
-    "メニュー", ["価格比較・検索", "商品・価格の登録", "店舗マスタ設定（住所連動）"]
+# サイドバー：メニュー選択（確実に3つ表示させる）
+st.sidebar.markdown("### 📌 メニュー")
+menu = st.sidebar.radio(
+    "移動先を選択してください",
+    ["価格比較・検索", "商品・価格の登録", "店舗マスタ設定（住所連動）"],
 )
 
 # --- ① 価格比較・検索画面 ---
@@ -110,7 +111,6 @@ if menu == "価格比較・検索":
   st.markdown("#### 🔍 4店舗横並び・単位単価チェック（買い回り最適化）")
 
   conn = sqlite3.connect(DB_NAME)
-  # 有効化されている（比較対象に選ばれている）店舗のみを抽出
   active_stores_df = pd.read_sql(
       "SELECT store_name FROM stores WHERE is_active = 1", conn
   )
@@ -135,21 +135,15 @@ if menu == "価格比較・検索":
 
   if df.empty:
     st.info(
-        "💡 まだ価格データが登録されていません。「商品・価格の登録」から価格を追加してみましょう。"
+        "💡 まだ価格データが登録されていません。左側のメニューから「商品・価格の登録」を選んでデータを追加してください。"
     )
   else:
-    # 選択中の店舗で絞り込み
     if active_stores:
       df_filtered = df[df["店舗名"].isin(active_stores)]
     else:
       df_filtered = df
 
-    st.markdown(
-        "##### 📊 選択した店舗（最大4店舗+α）の横並び単位単価マトリックス"
-    )
-    st.caption(
-        "※左メニューの「店舗マスタ設定」で比較したい店舗を変更できます。"
-    )
+    st.markdown("##### 📊 選択した店舗の横並び単位単価マトリックス")
 
     if not df_filtered.empty:
       pivot_price = df_filtered.pivot_table(
@@ -161,10 +155,10 @@ if menu == "価格比較・検索":
       st.dataframe(pivot_price, use_container_width=True)
     else:
       st.warning(
-          "選択された店舗の価格データがまだありません。店舗設定または価格登録を確認してください。"
+          "選択された店舗の価格データがまだありません。「店舗マスタ設定」や「価格の登録」をご確認ください。"
       )
 
-    st.markdown("##### 💡 商品ごとの詳細＆最安値店舗チェック")
+    st.markdown("##### 💡 商品ごとの詳細＆最安値チェック")
     target_product = st.selectbox("詳細を見たい商品を選択", df["商品名"].unique())
     prod_df = df[df["商品名"] == target_product].sort_values("単位あたり価格")
 
@@ -221,15 +215,16 @@ elif menu == "商品・価格の登録":
       )
 
     st.markdown("##### 2. 店舗と価格情報")
-    # 登録済みの店舗リストから選択（なければ自由入力も可）
-    selected_store = st.selectbox("店舗を選択", store_names)
+    if store_names:
+      selected_store = st.selectbox("店舗を選択", store_names)
+    else:
+      selected_store = st.text_input("店舗名を入力", value="ウエルシア")
 
     total_price = st.number_input(
         "購入総額（税込・円）", min_value=0.0, step=10.0
     )
     total_capacity = st.number_input(
-        "そのときの総容量・数量（例: 44個入りなら '44'、1500mlなら"
-        " '1500'）",
+        "そのときの総容量・数量（例: 44個なら '44'、1500mlなら '1500'）",
         min_value=0.1,
         step=1.0,
         value=1.0,
@@ -252,7 +247,6 @@ elif menu == "商品・価格の登録":
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
 
-        # 商品の自動登録 or 取得
         cursor.execute(
             "SELECT id, unit_name FROM products WHERE name = ?", (target_name,)
         )
@@ -303,7 +297,7 @@ elif menu == "商品・価格の登録":
 elif menu == "店舗マスタ設定（住所連動）":
   st.markdown("#### ⚙️ 住所から周辺店舗を自動表示＆比較店舗の選択")
   st.write(
-      "ご自宅などの住所を入力すると、近隣の主要店舗（ドラッグストア・スーパー等）が自動で候補に挙がります。比較したい店舗（Amazon・コストコ＋他2〜3店舗）にチェックを入れてください。"
+      "ご自宅などの住所を入力すると、近隣の主要店舗が候補に挙がります。比較したい店舗（Amazon・コストコ・他2〜3店舗）にチェックを入れてください。"
   )
 
   user_address = st.text_input(
@@ -311,11 +305,9 @@ elif menu == "店舗マスタ設定（住所連動）":
   )
 
   if st.button("住所から周辺店舗を自動検索・更新"):
-    # 住所に応じた近隣店舗の自動提案ロジック（モック連動）
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    # すでに登録されている店舗に加え、周辺の代表的な店舗候補を追加
     suggested_stores = [
         ("ウエルシア（近隣店）", "近隣店舗", 1),
         ("カインズ（近隣店）", "近隣店舗", 1),
@@ -336,41 +328,38 @@ elif menu == "店舗マスタ設定（住所連動）":
     conn.commit()
     conn.close()
     st.success(
-        f"📍 「{user_address}」周辺の店舗（ウエルシア、カインズ、ベイシアなど）とコストコ・Amazonを自動設定しました！下で比較する店舗を選んでください。"
+        f"📍 「{user_address}」周辺の店舗とコストコ・Amazonを自動設定しました！"
     )
 
   st.markdown("##### 🛒 今回の比較・買い回り対象にする店舗を選ぶ（最大4店舗〜推奨）")
-  st.caption(
-      "ここでチェックを入れた店舗だけが、最初の「価格比較・検索」画面の横並び表に表示されます。"
-  )
 
   conn = sqlite3.connect(DB_NAME)
   stores_df = pd.read_sql("SELECT * FROM stores", conn)
   conn.close()
 
-  with st.form("store_select_form"):
-    updated_actives = {}
-    for idx, row in stores_df.iterrows():
-      # デフォルトでチェックが入る状態を再現
-      is_checked = st.checkbox(
-          f"{row['store_name']} （{row['store_type']}）",
-          value=bool(row["is_active"]),
-          key=f"store_{row['id']}",
-      )
-      updated_actives[row["id"]] = is_checked
-
-    store_submit = st.form_submit_button("比較店舗の設定を保存する")
-
-    if store_submit:
-      conn = sqlite3.connect(DB_NAME)
-      cursor = conn.cursor()
-      for s_id, active_val in updated_actives.items():
-        cursor.execute(
-            "UPDATE stores SET is_active = ? WHERE id = ?",
-            (1 if active_val else 0, s_id),
+  if not stores_df.empty:
+    with st.form("store_select_form"):
+      updated_actives = {}
+      for idx, row in stores_df.iterrows():
+        is_checked = st.checkbox(
+            f"{row['store_name']} （{row['store_type']}）",
+            value=bool(row["is_active"]),
+            key=f"store_{row['id']}",
         )
-      conn.commit()
-      conn.close()
-      st.success(
-          "✨ 比較店舗の設定を保存しました！「価格比較・検索」画面で横並びの比較表を確認してみましょう。"
-      )
+        updated_actives[row["id"]] = is_checked
+
+      store_submit = st.form_submit_button("比較店舗の設定を保存する")
+
+      if store_submit:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        for s_id, active_val in updated_actives.items():
+          cursor.execute(
+              "UPDATE stores SET is_active = ? WHERE id = ?",
+              (1 if active_val else 0, s_id),
+          )
+        conn.commit()
+        conn.close()
+        st.success("✨ 比較店舗の設定を保存しました！")
+  else:
+    st.info("店舗データがありません。上のボタンを押して店舗を生成してください。")
