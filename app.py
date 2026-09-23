@@ -16,13 +16,15 @@ def init_db():
   cursor.execute("DROP TABLE IF EXISTS products")
   cursor.execute("DROP TABLE IF EXISTS stores")
 
-  # 商品マスタ
+  # 商品マスタ（スペック、詳細、画像URLを追加）
   cursor.execute("""
         CREATE TABLE products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE,
             category TEXT,
-            unit_name TEXT
+            unit_name TEXT,
+            spec_detail TEXT,
+            image_url TEXT
         )
     """)
 
@@ -52,18 +54,51 @@ def init_db():
         )
     """)
 
-  # 初期データの投入（商品）
+  # 初期データの投入（商品：スペック・画像付き）
   default_products = [
-      ("ボックスティッシュ (60箱ケース)", "日用品（消耗品）", "箱"),
-      ("トイレットペーパー (ダブル・72ロール)", "日用品（消耗品）", "ロール"),
-      ("洗濯用液体洗剤 (業務用詰替)", "日用品（消耗品）", "ml"),
-      ("お米 (5kg)", "食品・飲料", "kg"),
-      ("牛乳 (1L)", "食品・飲料", "本"),
+      (
+          "ボックスティッシュ (エリエール等 5箱パック)",
+          "日用品（消耗品）",
+          "パック",
+          "1箱あたり 200組(400枚)・パルプ100%",
+          "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=400",
+      ),
+      (
+          "トイレットペーパー (ダブル 72ロール)",
+          "日用品（消耗品）",
+          "ロール",
+          "ダブル 30m・パルプ100%・ソフトな肌触り",
+          "https://images.unsplash.com/photo-1583947215259-38e31be8751f?w=400",
+      ),
+      (
+          "洗濯用液体洗剤 (業務用詰替 4kg)",
+          "日用品（消耗品）",
+          "ml",
+          "大容量 4000ml・超特大詰替",
+          "https://images.unsplash.com/photo-1585421514284-efb74c2b69ba?w=400",
+      ),
+      (
+          "お米 (5kg)",
+          "食品・飲料",
+          "kg",
+          "精米 5kg・令和7年産ブレンド米",
+          "https://images.unsplash.com/photo-1586201375761-83865001e31c?w=400",
+      ),
+      (
+          "牛乳 (1L)",
+          "食品・飲料",
+          "本",
+          "成分無調整牛乳 1000ml",
+          "https://images.unsplash.com/photo-1550583724-b2692b85b150?w=400",
+      ),
   ]
-  for p_name, p_cat, p_unit in default_products:
+  for p_name, p_cat, p_unit, p_spec, p_img in default_products:
     cursor.execute(
-        "INSERT INTO products (name, category, unit_name) VALUES (?, ?, ?)",
-        (p_name, p_cat, p_unit),
+        """
+            INSERT INTO products (name, category, unit_name, spec_detail, image_url) 
+            VALUES (?, ?, ?, ?, ?)
+        """,
+        (p_name, p_cat, p_unit, p_spec, p_img),
     )
 
   # 初期データの投入（店舗）
@@ -138,7 +173,7 @@ menu = st.sidebar.radio(
 )
 
 
-# --- ネット価格の自動フェッチ（まとめ買い・単価考慮型）関数 ---
+# --- ネット価格の自動フェッチ関数 ---
 def fetch_and_register_prices(product_name):
   conn = sqlite3.connect(DB_NAME)
   cursor = conn.cursor()
@@ -207,7 +242,7 @@ def fetch_and_register_prices(product_name):
 if menu == "🔍 価格比較・検索（AIまとめ買い提案）":
   st.markdown("#### 🔍 商品を選択して価格・まとめ買いを比較する")
   st.write(
-      "商品を選ぶだけで、コストコやAmazonの**大容量ケース買い（まとめ買い）**を含めた総額と、**1個あたりの本当にお得な単価**をAIが比較・提案します。"
+      "商品を選ぶと、**商品の詳しい仕様（組数・シングル/ダブル等）**やパッケージ写真を確認しながら、コストコやAmazonのまとめ買いを含めた最安値が比較できます。"
   )
 
   conn = sqlite3.connect(DB_NAME)
@@ -233,43 +268,66 @@ if menu == "🔍 価格比較・検索（AIまとめ買い提案）":
 
       conn = sqlite3.connect(DB_NAME)
       cursor = conn.cursor()
+
+      # 商品情報（スペック・画像）の取得
+      cursor.execute(
+          "SELECT id, spec_detail, image_url, unit_name FROM products WHERE"
+          " name = ?",
+          (target_product,),
+      )
+      prod_info = cursor.fetchone()
+      prod_id, spec_detail, image_url, unit_name = prod_info
+
+      # 比較データの取得
       cursor.execute(
           """
                 SELECT 
-                    pr.store_name, 
-                    pr.total_price, 
-                    pr.total_capacity, 
-                    pr.unit_price, 
-                    p.unit_name,
-                    pr.updated_at
-                FROM prices pr
-                JOIN products p ON pr.product_id = p.id
-                WHERE p.name = ?
-                ORDER BY pr.unit_price ASC
+                    store_name, 
+                    total_price, 
+                    total_capacity, 
+                    unit_price, 
+                    updated_at
+                FROM prices 
+                WHERE product_id = ?
+                ORDER BY unit_price ASC
             """,
-          (target_product,),
+          (prod_id,),
       )
       rows = cursor.fetchall()
       conn.close()
 
-      st.markdown(f"##### 📊 『{target_product}』の比較結果")
+      # --- 商品詳細と写真プレビューエリア ---
+      st.markdown("---")
+      col_img, col_info = st.columns([1, 2])
+      with col_img:
+        if image_url:
+          st.image(image_url, caption=target_product, use_column_width=True)
+        else:
+          st.info("📸 画像未登録")
+      with col_info:
+        st.markdown(f"##### 📦 【商品名】 {target_product}")
+        st.markdown(
+            f"**📝 スペック・規格詳細**: `{spec_detail if spec_detail else '未登録'}`"
+        )
+        st.markdown(f"**📏 基準単位**: `{unit_name}`")
+
+      st.markdown("---")
+      st.markdown(f"##### 📊 価格・まとめ買い比較結果")
 
       if not rows:
         st.warning(
             f"⚠️ 「{target_product}」の価格データがまだありません。上のボタンを押して自動取得してください。"
         )
       else:
-        unit_label = rows[0][4] if rows[0][4] else "個"
-
         data_list = []
         raw_unit_prices = []
         for r in rows:
-          store_name, t_price, t_cap, u_price, u_name, upd_date = r
+          store_name, t_price, t_cap, u_price, upd_date = r
           data_list.append({
               "店舗名": store_name,
               "支払総額": f"{int(t_price):,} 円",
-              "まとめ数量": f"{int(t_cap)} {unit_label}",
-              "1個あたり単価": f"{u_price:.1f} 円/{unit_label}",
+              "まとめ数量": f"{int(t_cap)} {unit_name}",
+              "1個あたり単価": f"{u_price:.1f} 円/{unit_name}",
               "更新日": upd_date,
           })
           raw_unit_prices.append(u_price)
@@ -288,16 +346,15 @@ if menu == "🔍 価格比較・検索（AIまとめ買い提案）":
             use_container_width=True,
         )
 
-        # 最安値の行を特定
         min_idx = raw_unit_prices.index(min_unit_price)
         best_row = rows[min_idx]
         st.success(
             f"🏆 **【AIまとめ買い提案！】**\n\n"
             f"一番お得なのは **{best_row[0]}** です！\n"
             f"- **まとめ買い総額**: **{int(best_row[1]):,}円** （全"
-            f" {int(best_row[2])} {unit_label}）\n"
-            f"- **1{unit_label}あたりの単価**: **{best_row[3]:.1f}円**"
-            " （コストコ・Amazon等の大容量ケース買いで最安値を達成）"
+            f" {int(best_row[2])} {unit_name}）\n"
+            f"- **1{unit_name}あたりの単価**: **{best_row[3]:.1f}円**"
+            f" （スペック: {spec_detail}）"
         )
 
 # --- ② 価格・商品の登録画面 ---
@@ -382,9 +439,17 @@ elif menu == "📝 価格・商品の登録":
           prod_id = p_row[0]
         else:
           cursor.execute(
-              "INSERT INTO products (name, category, unit_name) VALUES"
-              " (?, ?, ?)",
-              (final_product, "日用品（消耗品）", unit_val),
+              """
+                    INSERT INTO products (name, category, unit_name, spec_detail, image_url) 
+                    VALUES (?, ?, ?, ?, ?)
+                """,
+              (
+                  final_product,
+                  "日用品（消耗品）",
+                  unit_val,
+                  "仕様未登録",
+                  "",
+              ),
           )
           conn.commit()
           prod_id = cursor.lastrowid
@@ -413,15 +478,14 @@ elif menu == "📝 価格・商品の登録":
 
         st.success(
             f"✨ 【{target_store}】の「{final_product}」（総額 {int(price_val):,}円 /"
-            f" {int(qty_val)}{unit_val}）を保存しました！（1{unit_val}あたり"
-            f" {unit_price:.1f}円）"
+            f" {int(qty_val)}{unit_val}）を保存しました！"
         )
 
 # --- ③ 店舗・商品マスタ管理画面 ---
 elif menu == "⚙️ 店舗・商品マスタ管理":
-  st.markdown("#### ⚙️ 店舗・商品の追加・整理")
+  st.markdown("#### ⚙️ 店舗・商品の追加・整理（スペック・画像対応）")
 
-  tab1, tab2 = st.tabs(["店舗の管理", "商品の管理"])
+  tab1, tab2 = st.tabs(["店舗の管理", "商品の詳細・スペック管理"])
 
   with tab1:
     st.markdown("##### 🏪 新規店舗の追加")
@@ -454,32 +518,55 @@ elif menu == "⚙️ 店舗・商品マスタ管理":
     st.dataframe(stores_df, use_container_width=True)
 
   with tab2:
-    st.markdown("##### 🛍️ 新規商品の追加")
-    new_p = st.text_input(
-        "追加する商品名", placeholder="例: ボックスティッシュ (60箱ケース)"
-    )
-    new_u = st.text_input("単位（例: 箱, ロール, ml, 袋）", value="箱")
-    if st.button("商品を追加する"):
-      if new_p:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        try:
-          cursor.execute(
-              "INSERT INTO products (name, category, unit_name) VALUES (?, ?,"
-              " ?)",
-              (new_p.strip(), "日用品（消耗品）", new_u.strip()),
-          )
-          conn.commit()
-          st.success(f"商品「{new_p}」を追加しました！")
-        except:
-          st.warning("その商品はすでに登録されています。")
-        conn.close()
+    st.markdown("##### 🛍️ 新規商品の追加（スペック・画像URL付き）")
+    with st.form("new_prod_form"):
+      new_p = st.text_input(
+          "商品名", placeholder="例: エリエール 贅沢保湿ティッシュ (3コパック)"
+      )
+      new_u = st.text_input("単位（例: 箱, ロール, パック, kg）", value="パック")
+      new_spec = st.text_area(
+          "スペック・規格詳細（例: 200組/400枚、パルプ100%、ダブル30mなど）",
+          placeholder="商品の詳細な違いや特徴を記載",
+      )
+      new_img = st.text_input(
+          "商品画像のURL（ネット上の画像リンク等）",
+          placeholder="https://example.com/image.jpg",
+      )
+
+      submitted_p = st.form_submit_button("➕ 新規商品を登録する")
+      if submitted_p:
+        if new_p:
+          conn = sqlite3.connect(DB_NAME)
+          cursor = conn.cursor()
+          try:
+            cursor.execute(
+                """
+                            INSERT INTO products (name, category, unit_name, spec_detail, image_url) 
+                            VALUES (?, ?, ?, ?, ?)
+                        """,
+                (
+                    new_p.strip(),
+                    "日用品（消耗品）",
+                    new_u.strip(),
+                    new_spec.strip(),
+                    new_img.strip(),
+                ),
+            )
+            conn.commit()
+            st.success(f"商品「{new_p}」を追加しました！")
+          except:
+            st.warning("その商品はすでに登録されています。")
+          conn.close()
 
     st.markdown("---")
-    st.markdown("##### 📋 現在登録されている商品一覧")
+    st.markdown("##### 📋 現在登録されている商品一覧とスペック")
     conn = sqlite3.connect(DB_NAME)
     products_df = pd.read_sql(
-        "SELECT id, name as 商品名, unit_name as 単位 FROM products", conn
+        """
+            SELECT id, name as 商品名, unit_name as 単位, spec_detail as スペック詳細, image_url as 画像URL 
+            FROM products
+        """,
+        conn,
     )
     conn.close()
     st.dataframe(products_df, use_container_width=True)
