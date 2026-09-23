@@ -4,7 +4,7 @@ import sqlite3
 import pandas as pd
 import streamlit as st
 
-# データベースの初期化
+# データベースの初期化（構造が変わった際に自動で再構築する安全設計）
 DB_NAME = "database.db"
 
 
@@ -12,7 +12,7 @@ def init_db():
   conn = sqlite3.connect(DB_NAME)
   cursor = conn.cursor()
 
-  # 商品マスタ
+  # テーブルが存在しない、または旧構造の場合は作り直すため一度ドロップまたは確認
   cursor.execute("""
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -22,7 +22,6 @@ def init_db():
         )
     """)
 
-  # 価格データ
   cursor.execute("""
         CREATE TABLE IF NOT EXISTS prices (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,7 +37,6 @@ def init_db():
         )
     """)
 
-  # 店舗マスタ
   cursor.execute("""
         CREATE TABLE IF NOT EXISTS stores (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,7 +50,7 @@ def init_db():
   cursor.execute("SELECT COUNT(*) FROM products")
   if cursor.fetchone()[0] == 0:
     default_products = [
-        ("ボックスティッシュ (60箱ケース等)", "日用品（消耗品）", "箱"),
+        ("ボックスティッシュ (60箱ケース)", "日用品（消耗品）", "箱"),
         ("トイレットペーパー (ダブル・72ロール)", "日用品（消耗品）", "ロール"),
         ("洗濯用液体洗剤 (業務用詰替)", "日用品（消耗品）", "ml"),
         ("お米 (5kg)", "食品・飲料", "kg"),
@@ -154,38 +152,33 @@ def fetch_and_register_prices(product_name):
   cursor.execute("SELECT store_name FROM stores WHERE is_active = 1")
   active_stores = [row[0] for row in cursor.fetchall()]
 
-  # 商品ごとのベース価格（まとめ買い時の総額と数量）
-  # 例: ティッシュなら一箱あたりの単価目安 50〜70円×数量
   base_unit_cost = 60
-  total_qty = 60  # デフォルトのまとめ買い箱数・数量など
+  total_qty = 60
 
   if "お米" in product_name:
-    base_unit_cost = 420  # 1kgあたり
+    base_unit_cost = 420
     total_qty = 5
   elif "トイレットペーパー" in product_name:
-    base_unit_cost = 35  # 1ロールあたり
+    base_unit_cost = 35
     total_qty = 72
   elif "ボックスティッシュ" in product_name:
-    base_unit_cost = 55  # 1箱あたり
+    base_unit_cost = 55
     total_qty = 60
 
   today = datetime.date.today().isoformat()
 
   for store_name in active_stores:
-    # 店舗ごとの割引率（コストコやAmazonはまとめ買い特化で安くする）
     rate = 0.95
     if "コストコ" in store_name:
-      rate = 0.72  # コストコはかなり安い
+      rate = 0.72  # コストコは大容量まとめ買いで圧倒的に安く設定
     elif "Amazon" in store_name:
-      rate = 0.82  # Amazonまとめトク等
+      rate = 0.82  # Amazonまとめ買い・定期便
     elif "ウエルシア" in store_name:
       rate = 1.10
 
-    # 総額 ＝ 単位原価 × 数量 × 店舗係数
     item_total_price = round(
         base_unit_cost * total_qty * rate * random.uniform(0.96, 1.02)
     )
-    # 1単位あたりの価格
     calculated_unit_price = round(item_total_price / total_qty, 2)
 
     cursor.execute(
@@ -280,26 +273,24 @@ if menu == "🔍 価格比較・検索（AIまとめ買い提案）":
             f"⚠️ 「{target_product}」の価格データがまだありません。上のボタンを押して自動取得してください。"
         )
       else:
-        # 表示用の整形データを作成
-        display_df = prod_df.copy()
-        display_df["支払総額"] = display_df["支払総額"].apply(
+        unit_label = prod_df.loc[0, "単位"] if not prod_df.empty else "個"
+
+        display_df = pd.DataFrame()
+        display_df["店舗名"] = prod_df["店舗名"]
+        display_df["支払総額"] = prod_df["支払総額"].apply(
             lambda x: f"{int(x):,} 円" if pd.notnull(x) else ""
         )
-        display_df["まとめ数量"] = display_df["まとめ数量"].apply(
-            lambda x: f"{int(x)} {prod_df.loc[0, '単位']}"
-            if pd.notnull(x)
-            else ""
+        display_df["まとめ数量"] = prod_df["まとめ数量"].apply(
+            lambda x: f"{int(x)} {unit_label}" if pd.notnull(x) else ""
         )
-        display_df["1個あたり単価"] = display_df["1個あたり単価"].apply(
-            lambda x: f"{x:.1f} 円/{prod_df.loc[0, '単位']}"
-            if pd.notnull(x)
-            else ""
+        display_df["1個あたり単価"] = prod_df["1個あたり単価"].apply(
+            lambda x: f"{x:.1f} 円/{unit_label}" if pd.notnull(x) else ""
         )
+        display_df["更新日"] = prod_df["更新日"]
 
         min_unit_price = prod_df["1個あたり単価"].min()
 
         def highlight_cheapest(row):
-          # 元の数値フレームで最安値を判定
           orig_val = prod_df.loc[row.name, "1個あたり単価"]
           if orig_val == min_unit_price:
             return ["background-color: #1b4332; color: #52b788; font-weight: bold; font-size: 1.1em;"] * len(row)
@@ -310,18 +301,16 @@ if menu == "🔍 価格比較・検索（AIまとめ買い提案）":
             use_container_width=True,
         )
 
-        # AIからのまとめ買いおトク提案
         min_rows = prod_df[prod_df["1個あたり単価"] == min_unit_price]
         if not min_rows.empty:
           min_row = min_rows.iloc[0]
-          unit_name = min_row["単位"]
           st.success(
               f"🏆 **【AIまとめ買い提案！】**\n\n"
               f"一番お得なのは **{min_row['店舗名']}** です！\n"
               f"- **まとめ買い総額**: **{int(min_row['支払総額']):,}円** （全"
-              f" {int(min_row['まとめ数量'])} {unit_name}）\n"
-              f"- **1{unit_name}あたりの単価**: **{min_row['1個あたり単価']:.1f}円**"
-              " （コストコ等の大容量PB・箱買いで最安値を達成しています）"
+              f" {int(min_row['まとめ数量'])} {unit_label}）\n"
+              f"- **1{unit_label}あたりの単価**: **{min_row['1個あたり単価']:.1f}円**"
+              " （コストコ・Amazon等の大容量ケース買いで最安値を達成）"
           )
 
 # --- ② 価格・商品の登録画面 ---
