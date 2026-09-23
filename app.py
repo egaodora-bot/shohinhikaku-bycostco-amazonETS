@@ -60,13 +60,18 @@ if menu == "価格比較・検索":
   st.markdown("#### 🔍 店舗横並び・単位単価チェック")
 
   conn = sqlite3.connect(DB_NAME)
+  # SELECT句を正しく記述するように修正
   query = """
-        p.id as product_id, p.name as 商品名, p.category as カテゴリ, 
-        p.unit_name as 単位,
-        pr.store_name as 店舗名, 
-        pr.total_price as 総額, 
-        pr.unit_price as 単位あたり価格, 
-        pr.is_sale as 特売フラグ, pr.updated_at as 更新日
+        SELECT 
+            p.id as product_id, 
+            p.name as 商品名, 
+            p.category as カテゴリ, 
+            p.unit_name as 単位,
+            pr.store_name as 店舗名, 
+            pr.total_price as 総額, 
+            pr.unit_price as 単位あたり価格, 
+            pr.is_sale as 特売フラグ, 
+            pr.updated_at as 更新日
         FROM prices pr
         JOIN products p ON pr.product_id = p.id
     """
