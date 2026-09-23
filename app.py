@@ -47,57 +47,44 @@ def init_db():
         )
     """)
 
-  # 既存の重複や古いデータをクリアして、整理されたマスターに再構築
-  # （※価格データとの外部キー制約を考慮しつつ初期商品を整理します）
-  cursor.execute("DELETE FROM products")
+  cursor.execute("SELECT COUNT(*) FROM products")
+  if cursor.fetchone()[0] == 0:
+    default_products = [
+        ("トイレットペーパー (ダブル)", "日用品（消耗品）", "m"),
+        ("ボックスティッシュ", "日用品（消耗品）", "箱"),
+        ("洗濯用液体洗剤", "日用品（消耗品）", "ml"),
+        ("食器用中性洗剤", "日用品（消耗品）", "ml"),
+        ("お風呂用洗剤", "日用品（消耗品）", "ml"),
+        ("入浴剤 バブ", "日用品（消耗品）", "錠"),
+        ("キャッツビーフェイスタオル", "日用品（消耗品）", "枚"),
+        ("単3電池 / 単4電池", "家電・ガジェット", "本"),
+        ("不織布マスク", "日用品（消耗品）", "枚"),
+        ("衣料用洗剤", "日用品（消耗品）", "ml"),
+        ("ボディソープ・石鹸", "日用品（消耗品）", "個"),
+    ]
+    for p_name, p_cat, p_unit in default_products:
+      cursor.execute(
+          "INSERT OR IGNORE INTO products (name, category, unit_name) VALUES"
+          " (?, ?, ?)",
+          (p_name, p_cat, p_unit),
+      )
 
-  # 定番日用品の整理された初期データ（トイレットペーパーはダブルのみ、ご指定の追加商品を含む）
-  default_products = [
-      ("トイレットペーパー (ダブル)", "日用品（消耗品）", "m"),
-      ("ボックスティッシュ", "日用品（消耗品）", "箱"),
-      ("洗濯用液体洗剤", "日用品（消耗品）", "ml"),
-      ("食器用中性洗剤", "日用品（消耗品）", "ml"),
-      ("お風呂用洗剤", "日用品（消耗品）", "ml"),
-      ("台所用スポンジ", "日用品（消耗品）", "個"),
-      ("ゴミ袋 (45L)", "日用品（消耗品）", "枚"),
-      ("お米 (5kg)", "食品・飲料", "kg"),
-      ("牛乳 (1L)", "食品・飲料", "本"),
-      # ご指定の追加商品
-      ("入浴剤 バブ", "日用品（消耗品）", "錠"),
-      ("キャッツビーフェイスタオル", "日用品（消耗品）", "枚"),
-      ("単3電池 / 単4電池", "家電・ガジェット", "本"),
-      ("不織布マスク", "日用品（消耗品）", "枚"),
-      ("衣料用洗剤", "日用品（消耗品）", "ml"),
-      ("ボディソープ・石鹸", "日用品（消耗品）", "個"),
-  ]
-
-  for p_name, p_cat, p_unit in default_products:
-    cursor.execute(
-        """
-            INSERT OR IGNORE INTO products (name, category, unit_name) 
-            VALUES (?, ?, ?)
-        """,
-        (p_name, p_cat, p_unit),
-    )
-
-  # ご指定の店舗を含む初期データ（コストコ壬生・明和、業務スーパー、コスモス、カインズ等）
-  default_stores = [
-      ("Amazon（定期おトク便）", "Amazon", 1),
-      ("コストコ 壬生倉庫店", "コストコ", 1),
-      ("コストコ 明和倉庫店", "コストコ", 1),
-      ("カインズ（近隣店）", "近隣店舗", 1),
-      ("コスモス（近隣店）", "近隣店舗", 1),
-      ("業務スーパー（近隣店）", "近隣店舗", 1),
-      ("ウエルシア（近隣店）", "近隣店舗", 0),
-  ]
-  for s_name, s_type, s_active in default_stores:
-    cursor.execute(
-        """
-            INSERT OR IGNORE INTO stores (store_name, store_type, is_active) 
-            VALUES (?, ?, ?)
-        """,
-        (s_name, s_type, s_active),
-    )
+  cursor.execute("SELECT COUNT(*) FROM stores")
+  if cursor.fetchone()[0] == 0:
+    default_stores = [
+        ("Amazon（定期おトク便）", "Amazon", 1),
+        ("コストコ 壬生倉庫店", "コストコ", 1),
+        ("コストコ 明和倉庫店", "コストコ", 1),
+        ("カインズ（近隣店）", "近隣店舗", 1),
+        ("コスモス（近隣店）", "近隣店舗", 1),
+        ("ウエルシア（近隣店）", "近隣店舗", 1),
+    ]
+    for s_name, s_type, s_active in default_stores:
+      cursor.execute(
+          "INSERT OR IGNORE INTO stores (store_name, store_type, is_active) VALUES"
+          " (?, ?, ?)",
+          (s_name, s_type, s_active),
+      )
 
   conn.commit()
   conn.close()
@@ -109,104 +96,118 @@ st.set_page_config(
     page_title="買い物価格比較 & 底値DB", page_icon="🛒", layout="wide"
 )
 
-st.markdown("### 🛒 買い物価格比較 & 底値DB")
-st.caption(
-    "リポジトリ: `shohinhikaku-bycostco-amazonETS` | 商品整理・定番品追加版"
+# --- 見やすいダークモード（白文字×黒背景）のデザイン適用 ---
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background-color: #121212;
+        color: #FFFFFF;
+    }
+    h1, h2, h3, h4, h5, h6, p, label, span, div {
+        color: #FFFFFF !important;
+    }
+    .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"] {
+        background-color: #222222 !important;
+        color: #FFFFFF !important;
+    }
+    table {
+        color: #FFFFFF !important;
+    }
+    thead tr th {
+        background-color: #333333 !important;
+        color: #FFFFFF !important;
+    }
+    tbody tr td {
+        background-color: #1E1E1E !important;
+        color: #FFFFFF !important;
+    }
+    </style>
+""",
+    unsafe_allow_html=True,
 )
+
+st.markdown("### 🛒 買い物価格比較 & 底値DB")
 
 # サイドバー：メニュー選択
 st.sidebar.markdown("### 📌 メニュー")
 menu = st.sidebar.radio(
     "移動先を選択してください",
     [
-        "価格比較・検索",
-        "複数商品の価格を一括登録",
-        "店舗マスタ設定（地域・住所連動）",
+        "🔍 価格比較・検索（ワンクリックで最安値発見）",
+        "📝 価格・商品の登録",
+        "⚙️ 店舗・商品マスタ管理",
     ],
 )
 
 # --- ① 価格比較・検索画面 ---
-if menu == "価格比較・検索":
-  st.markdown("#### 🔍 4店舗横並び・単位単価チェック（買い回り最適化）")
+if menu == "🔍 価格比較・検索（ワンクリックで最安値発見）":
+  st.markdown("#### 🔍 商品ごとの価格比較と最安値チェック")
+  st.write(
+      "調べたい商品を選択し、**「比較・検索する」ボタン**を押すと、各店舗の価格と最安値が分かりやすく表示されます。"
+  )
 
   conn = sqlite3.connect(DB_NAME)
-  active_stores_df = pd.read_sql(
-      "SELECT store_name FROM stores WHERE is_active = 1", conn
-  )
-  active_stores = active_stores_df["store_name"].tolist()
-
-  query = """
-        SELECT 
-            p.id as product_id, 
-            p.name as 商品名, 
-            p.category as カテゴリ, 
-            p.unit_name as 単位,
-            pr.store_name as 店舗名, 
-            pr.total_price as 総額, 
-            pr.unit_price as 単位あたり価格, 
-            pr.is_sale as 特売フラグ, 
-            pr.updated_at as 更新日
-        FROM prices pr
-        JOIN products p ON pr.product_id = p.id
-    """
-  df = pd.read_sql(query, conn)
+  products_df = pd.read_sql("SELECT name FROM products", conn)
   conn.close()
 
-  if df.empty:
-    st.info(
-        "💡 まだ価格データが登録されていません。「複数商品の価格を一括登録」からデータを追加してみましょう。"
-    )
+  if products_df.empty:
+    st.info("💡 まず「価格・商品の登録」から商品を追加してください。")
   else:
-    if active_stores:
-      df_filtered = df[df["店舗名"].isin(active_stores)]
-    else:
-      df_filtered = df
-
-    st.markdown("##### 📊 選択した店舗の横並び単位単価マトリックス")
-
-    if not df_filtered.empty:
-      pivot_price = df_filtered.pivot_table(
-          index=["商品名", "単位"],
-          columns="店舗名",
-          values="単位あたり価格",
-          aggfunc="min",
+    with st.form("search_form"):
+      target_product = st.selectbox(
+          "比較したい商品を選択", products_df["name"].tolist()
       )
-      st.dataframe(pivot_price, use_container_width=True)
-    else:
-      st.warning(
-          "選択された店舗の価格データがまだありません。「店舗マスタ設定」や「価格登録」をご確認ください。"
-      )
+      search_btn = st.form_submit_button("🔍 比較・検索する")
 
-    st.markdown("##### 💡 商品ごとの詳細＆最安値チェック")
-    target_product = st.selectbox("詳細を見たい商品を選択", df["商品名"].unique())
-    prod_df = df[df["商品名"] == target_product].sort_values("単位あたり価格")
+    if search_btn or target_product:
+      conn = sqlite3.connect(DB_NAME)
+      query = """
+                SELECT 
+                    p.name as 商品名, 
+                    pr.store_name as 店舗名, 
+                    pr.total_price as 総額, 
+                    pr.unit_price as 単位あたり価格, 
+                    p.unit_name as 単位,
+                    pr.updated_at as 更新日
+                FROM prices pr
+                JOIN products p ON pr.product_id = p.id
+                WHERE p.name = ?
+                ORDER BY pr.unit_price ASC
+            """
+      prod_df = pd.read_sql(query, conn, params=(target_product,))
+      conn.close()
 
-    st.table(
-        prod_df[[
-            "店舗名",
-            "総額",
-            "単位あたり価格",
-            "特売フラグ",
-            "更新日",
-        ]]
-    )
+      st.markdown(f"##### 📊 『{target_product}』の比較結果")
 
-    if not prod_df.empty:
-      min_row = prod_df.iloc[0]
-      st.success(
-          f"🏆 **現在の最安値:** 【{min_row['店舗名']}】 で **1{min_row['単位']}あたり"
-          f" {min_row['単位あたり価格']:.2f} 円** です！ (総額: {min_row['総額']}円)"
-      )
+      if prod_df.empty:
+        st.warning(
+            f"⚠️ 「{target_product}」の価格データがまだ登録されていません。「価格・商品の登録」画面から各店舗の価格を入力してください。"
+        )
+      else:
+        # 最安値を目立たせるハイライト表示
+        min_price = prod_df["単位あたり価格"].min()
 
-# --- ② 複数商品の価格を一括登録画面 ---
-elif menu == "複数商品の価格を一括登録":
-  st.markdown("#### 📝 複数商品の価格を一括登録（時短・自動追加対応）")
-  st.write(
-      "1つの店舗で複数の商品をまとめて購入した際、一気に数値を入力して一度に保存できます。"
-  )
-  st.write(
-      "※リストにない新しい商品や店舗名を入力した場合は、**自動的にマスターへ追加**されます！"
-  )
+        def highlight_cheapest(row):
+          if row["単位あたり価格"] == min_price:
+            return ["background-color: #1b4332; color: #52b788; font-weight: bold"] * len(row)
+          return [""] * len(row)
+
+        st.dataframe(
+            prod_df.style.apply(highlight_cheapest, axis=1),
+            use_container_width=True,
+        )
+
+        min_row = prod_df.iloc[0]
+        st.success(
+            f"🏆 **【最安値！】** **{min_row['店舗名']}** （1{min_row['単位']}あたり"
+            f" **{min_row['unit_price']:.2f}円** / 総額: {min_row['総額']}円）が一番お得です！"
+        )
+
+# --- ② 価格・商品の登録画面 ---
+elif menu == "📝 価格・商品の登録":
+  st.markdown("#### 📝 各店舗の価格登録")
+  st.write("ネットやチラシで調べた店舗の価格を登録・更新できます。")
 
   conn = sqlite3.connect(DB_NAME)
   products_df = pd.read_sql("SELECT * FROM products", conn)
@@ -218,60 +219,56 @@ elif menu == "複数商品の価格を一括登録":
   )
   store_names = stores_df["store_name"].tolist() if not stores_df.empty else []
 
-  with st.form("bulk_register_form"):
-    st.markdown("##### 📍 購入店舗の選択（または直接入力）")
-    store_choice = st.selectbox("店舗を選択", store_names + ["【＋新しい店舗を直接入力】"])
-    new_store_input = st.text_input(
-        "※上の選択肢で「【＋新しい店舗を直接入力】」を選んだ場合はこちらに入力",
-        placeholder="例: ヨークベニマル 古河店",
-    )
+  with st.form("register_form"):
+    col_s1, col_s2 = st.columns(2)
+    with col_s1:
+      store_choice = st.selectbox(
+          "店舗を選ぶ", store_names + ["【＋新しい店舗を追加】"]
+      )
+    with col_s2:
+      new_store_input = st.text_input(
+          "※新しい店舗名（左で追加を選んだ場合）", placeholder="例: ヨークベニマル"
+      )
 
     st.markdown("---")
-    st.markdown(
-        "##### 🛍️ 商品ごとの価格・容量入力（最大5件を同時にサクサク入力）"
-    )
+    col_p1, col_p2, col_p3, col_p4 = st.columns([3, 2, 2, 1])
+    with col_p1:
+      p_choice = st.selectbox(
+          "商品を選ぶ", product_names + ["【＋新しい商品を追加】"]
+      )
+      p_custom = st.text_input("※新しい商品名", placeholder="商品名を入力")
+    with col_p2:
+      price_val = st.number_input("総額 (円)", min_value=0.0, step=10.0)
+    with col_p3:
+      cap_val = st.number_input("容量・数量", min_value=0.1, value=1.0)
+    with col_p4:
+      unit_val = st.text_input("単位", value="個")
 
-    for i in range(1, 6):
-      st.markdown(f"**商品 {i}**")
-      col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
-      with col1:
-        p_name = st.selectbox(
-            f"商品名 #{i}",
-            ["-- 登録しない --"] + product_names + ["【＋新規商品を追加】"],
-            key=f"p_name_{i}",
-        )
-        p_name_custom = st.text_input(
-            f"新規商品名 #{i}",
-            placeholder="商品名を入力",
-            key=f"p_custom_{i}",
-        )
-      with col2:
-        total_price = st.number_input(
-            f"総額(円) #{i}", min_value=0.0, step=10.0, key=f"price_{i}"
-        )
-      with col3:
-        total_cap = st.number_input(
-            f"容量/数量 #{i}", min_value=0.1, value=1.0, key=f"cap_{i}"
-        )
-      with col4:
-        unit_in = st.text_input(f"単位 #{i}", value="個", key=f"unit_{i}")
-      st.markdown("")
-
-    submitted = st.form_submit_button("一括データをデータベースに保存する")
+    submitted = st.form_submit_button("💾 この価格データを保存する")
 
     if submitted:
       target_store = (
           new_store_input.strip()
-          if store_choice == "【＋新しい店舗を直接入力】"
+          if store_choice == "【＋新しい店舗を追加】"
           else store_choice
+      )
+      final_product = (
+          p_custom.strip()
+          if p_choice == "【＋新しい商品を追加】"
+          else p_choice
       )
 
       if not target_store:
-        st.error("⚠️ 店舗名を選択または入力してください。")
+        st.error("⚠️ 店舗名を入力してください。")
+      elif not final_product:
+        st.error("⚠️ 商品名を選択または入力してください。")
+      elif price_val <= 0:
+        st.error("⚠️ 総額（円）を正しく入力してください。")
       else:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
 
+        # 店舗確認・追加
         cursor.execute("SELECT id FROM stores WHERE store_name = ?", (target_store,))
         if not cursor.fetchone():
           cursor.execute(
@@ -281,142 +278,87 @@ elif menu == "複数商品の価格を一括登録":
           )
           conn.commit()
 
-        saved_count = 0
+        # 商品確認・追加
+        cursor.execute("SELECT id FROM products WHERE name = ?", (final_product,))
+        p_row = cursor.fetchone()
+        if p_row:
+          prod_id = p_row[0]
+        else:
+          cursor.execute(
+              "INSERT INTO products (name, category, unit_name) VALUES"
+              " (?, ?, ?)",
+              (final_product, "日用品（消耗品）", unit_val),
+          )
+          conn.commit()
+          prod_id = cursor.lastrowid
+
+        unit_price = price_val / cap_val if cap_val > 0 else 0
         today = datetime.date.today().isoformat()
 
-        for i in range(1, 6):
-          selected_p = st.session_state.get(f"p_name_{i}")
-          custom_p = st.session_state.get(f"p_custom_{i}", "").strip()
-          t_price = st.session_state.get(f"price_{i}", 0.0)
-          t_cap = st.session_state.get(f"cap_{i}", 1.0)
-          u_name = st.session_state.get(f"unit_{i}", "個")
-
-          final_product_name = ""
-          if selected_p == "【＋新規商品を追加】" and custom_p:
-            final_product_name = custom_p
-          elif selected_p and selected_p not in [
-              "-- 登録しない --",
-              "【＋新規商品を追加】",
-          ]:
-            final_product_name = selected_p
-
-          if final_product_name and t_price > 0:
-            cursor.execute(
-                "SELECT id, unit_name FROM products WHERE name = ?",
-                (final_product_name,),
-            )
-            p_row = cursor.fetchone()
-            if p_row:
-              prod_id = p_row[0]
-            else:
-              cursor.execute(
-                  "INSERT INTO products (name, category, unit_name) VALUES"
-                  " (?, ?, ?)",
-                  (final_product_name, "日用品（消耗品）", u_name),
-              )
-              conn.commit()
-              prod_id = cursor.lastrowid
-
-            unit_price = t_price / t_cap if t_cap > 0 else 0
-
-            cursor.execute(
-                """
-                        INSERT INTO prices (product_id, store_type, store_name, total_price, total_capacity, unit_price, is_sale, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                (
-                    prod_id,
-                    "近隣店舗",
-                    target_store,
-                    t_price,
-                    t_cap,
-                    unit_price,
-                    0,
-                    today,
-                ),
-            )
-            saved_count += 1
-
+        cursor.execute(
+            """
+                INSERT INTO prices (product_id, store_type, store_name, total_price, total_capacity, unit_price, is_sale, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                prod_id,
+                "近隣店舗",
+                target_store,
+                price_val,
+                cap_val,
+                unit_price,
+                0,
+                today,
+            ),
+        )
         conn.commit()
         conn.close()
 
-        if saved_count > 0:
-          st.success(
-              f"✨ 【{target_store}】での価格データ **{saved_count}件**"
-              " の一括保存が完了しました！"
-          )
-        else:
-          st.warning(
-              "⚠️ 保存されたデータがありません。商品名と価格を正しく入力してください。"
-          )
-
-# --- ③ 店舗マスタ設定（地域・住所連動）画面 ---
-elif menu == "店舗マスタ設定（地域・住所連動）":
-  st.markdown("#### ⚙️ 地域・住所連動による店舗自動切り替え＆比較設定")
-  st.write(
-      "お住まいの地域や住所を入力すると、その周辺に合わせた主要スーパー・ドラッグストアやコストコ（壬生・明和）が自動でセットされます。"
-  )
-
-  user_address = st.text_input(
-      "基準となる住所・エリア（例: 茨城県古河市...）", value="茨城県古河市"
-  )
-
-  if st.button("地域を変更して周辺店舗を自動連動・更新"):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-
-    regional_stores = [
-        ("コストコ 壬生倉庫店", "コストコ", 1),
-        ("コストコ 明和倉庫店", "コストコ", 1),
-        ("カインズ（近隣店）", "近隣店舗", 1),
-        ("コスモス（近隣店）", "近隣店舗", 1),
-        ("業務スーパー（近隣店）", "近隣店舗", 1),
-        ("Amazon（定期おトク便）", "Amazon", 1),
-    ]
-
-    for s_name, s_type, s_active in regional_stores:
-      cursor.execute(
-          """
-                INSERT OR IGNORE INTO stores (store_name, store_type, is_active) 
-                VALUES (?, ?, ?)
-            """,
-          (s_name, s_type, s_active),
-      )
-    conn.commit()
-    conn.close()
-    st.success(
-        f"📍 地域を「{user_address}」に連動させました！ 業務スーパー・コスモス・カインズ・コストコ（壬生・明和）がマスターに反映されました。"
-    )
-
-  st.markdown("##### 🛒 買い回り比較の対象にする店舗を選択（最大4店舗〜推奨）")
-
-  conn = sqlite3.connect(DB_NAME)
-  stores_df = pd.read_sql("SELECT * FROM stores", conn)
-  conn.close()
-
-  if not stores_df.empty:
-    with st.form("store_select_form"):
-      updated_actives = {}
-      for idx, row in stores_df.iterrows():
-        is_checked = st.checkbox(
-            f"{row['store_name']} （{row['store_type']}）",
-            value=bool(row["is_active"]),
-            key=f"store_{row['id']}",
+        st.success(
+            f"✨ 【{target_store}】の「{final_product}」（{price_val}円）を保存しました！「価格比較・検索」から確認できます。"
         )
-        updated_actives[row["id"]] = is_checked
 
-      store_submit = st.form_submit_button("比較店舗の設定を保存する")
+# --- ③ 店舗・商品マスタ管理画面 ---
+elif menu == "⚙️ 店舗・商品マスタ管理":
+  st.markdown("#### ⚙️ 店舗・商品の追加・整理")
 
-      if store_submit:
+  tab1, tab2 = st.tabs(["店舗の管理", "商品の管理"])
+
+  with tab1:
+    st.markdown("##### 🏪 新規店舗の追加")
+    new_s = st.text_input("追加する店舗名", placeholder="例: ベイシア 古河店")
+    if st.button("店舗を追加する"):
+      if new_s:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
-        for s_id, active_val in updated_actives.items():
+        try:
           cursor.execute(
-              "UPDATE stores SET is_active = ? WHERE id = ?",
-              (1 if active_val else 0, s_id),
+              "INSERT INTO stores (store_name, store_type, is_active) VALUES"
+              " (?, ?, ?)",
+              (new_s.strip(), "近隣店舗", 1),
           )
-        conn.commit()
+          conn.commit()
+          st.success(f"店舗「{new_s}」を追加しました！")
+        except:
+          st.warning("その店舗はすでに登録されています。")
         conn.close()
-        st.success("✨ 比較店舗の設定を保存しました！")
-  else:
-    st.info("店舗データがありません。上のボタンを押して生成してください。")
+
+  with tab2:
+    st.markdown("##### 🛍️ 新規商品の追加")
+    new_p = st.text_input("追加する商品名", placeholder="例: 柔軟剤 〇〇")
+    new_u = st.text_input("単位（例: ml, 個, m, 本）", value="個")
+    if st.button("商品を追加する"):
+      if new_p:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        try:
+          cursor.execute(
+              "INSERT INTO products (name, category, unit_name) VALUES (?, ?,"
+              " ?)",
+              (new_p.strip(), "日用品（消耗品）", new_u.strip()),
+          )
+          conn.commit()
+          st.success(f"商品「{new_p}」を追加しました！")
+        except:
+          st.warning("その商品はすでに登録されています。")
+        conn.close()
