@@ -60,17 +60,17 @@ def init_db():
     default_products = [
         (
             "大王製紙",
-            "トイレットペーパー (ダブル)",
+            "トイレットペーパー",
             "日用品",
             "m",
-            "1.5倍巻き・総m数で比較",
+            "ダブル 1.5倍巻き",
         ),
         (
             "大王製紙",
             "ボックスティッシュ",
             "日用品",
             "箱",
-            "5箱パック・1箱200組(400枚)",
+            "5箱パック・1箱200組",
         ),
         ("一般メーカー", "お米 (5kg)", "食品", "kg", "精米 5kg"),
         ("花王", "洗濯用液体洗剤", "日用品", "ml", "詰替用"),
@@ -162,18 +162,17 @@ if menu == "🔍 価格比較・検索":
 
   conn = sqlite3.connect(DB_NAME)
   cursor = conn.cursor()
-  cursor.execute("SELECT id, maker_name, name FROM products")
+  cursor.execute("SELECT id, maker_name, name, spec_detail FROM products")
   all_products = cursor.fetchall()
   conn.close()
 
-  # 選択肢用のリストを作成（メーカー名がある場合は「[メーカー] 商品名」、ない場合は「商品名」のみにする）
+  # 選択肢用のリストを作成（メーカー名、商品名、スペックを分かりやすく結合）
   prod_options = {}
   for p in all_products:
-    p_id, m_name, p_name = p[0], p[1], p[2]
-    if m_name and m_name.strip() and m_name != "ノーブランド":
-      label = f"[{m_name}] {p_name}"
-    else:
-      label = p_name
+    p_id, m_name, p_name, spec = p[0], p[1], p[2], p[3]
+    maker_str = f"[{m_name}] " if m_name and m_name.strip() else ""
+    spec_str = f" ({spec})" if spec and spec.strip() else ""
+    label = f"{maker_str}{p_name}{spec_str}"
     prod_options[label] = p_id
 
   selected_label = st.selectbox(
@@ -206,30 +205,28 @@ if menu == "🔍 価格比較・検索":
     conn.close()
 
     display_maker_prefix = (
-        f"[{maker_name}] "
-        if maker_name and maker_name.strip() and maker_name != "ノーブランド"
-        else ""
+        f"[{maker_name}] " if maker_name and maker_name.strip() else ""
+    )
+    display_spec_suffix = (
+        f" ({spec_detail})" if spec_detail and spec_detail.strip() else ""
     )
 
     st.markdown("---")
     st.markdown(
-        f"##### 📦 選択中商品: **{display_maker_prefix}{target_product}**"
-    )
-    maker_display_text = (
-        maker_name
-        if maker_name and maker_name.strip()
-        else "（未設定・ノーブランド）"
+        "##### 📦 選択中商品:"
+        f" **{display_maker_prefix}{target_product}{display_spec_suffix}**"
     )
     st.markdown(
-        f"**🏷️ メーカー**: `{maker_display_text}` | **📝 スペック**:"
-        f" `{spec_detail}` | **基準単位**: `{unit_name}`"
+        f"**🏷️ メーカー**: `{maker_name if maker_name and maker_name.strip() else 'なし（登録なし）'}` | "
+        f"**📝 スペック・詳細**: `{spec_detail if spec_detail else 'なし'}` | "
+        f"**基準単位**: `{unit_name}`"
     )
     st.markdown("---")
     st.markdown("##### 📊 各店舗の価格・実質単価比較")
 
     if not rows:
       st.info(
-          f"💡 「{target_product}」の価格データがまだ登録されていません。「📝"
+          f"💡 「{target_product}{display_spec_suffix}」の価格データがまだ登録されていません。「📝"
           " 価格・商品の登録」メニューから価格と総容量を登録してください。"
       )
     else:
@@ -279,7 +276,7 @@ if menu == "🔍 価格比較・検索":
 elif menu == "📝 価格・商品の登録":
   st.markdown("#### 📝 店舗ごとの価格・容量の手動登録")
   st.write(
-      "メーカー名や商品名、総m数（トイレットペーパー等）を入力して正確に登録できます。"
+      "メーカー名、商品名、および「ダブル」「シングル」「ロール数」などのスペックを詳細に入力できます。"
   )
 
   conn = sqlite3.connect(DB_NAME)
@@ -305,8 +302,7 @@ elif menu == "📝 価格・商品の登録":
     col_p1, col_p2, col_p3 = st.columns(3)
     with col_p1:
       maker_input = st.text_input(
-          "メーカー名（ブランド名 ※任意）",
-          placeholder="例: エリエール, 花王 （なしは空欄）",
+          "メーカー名（※任意）", placeholder="例: エリエール (空欄でも可)"
       )
     with col_p2:
       p_choice = st.selectbox(
@@ -314,8 +310,14 @@ elif menu == "📝 価格・商品の登録":
       )
     with col_p3:
       p_custom = st.text_input(
-          "※新しい商品名", placeholder="商品名を入力（例: 贅沢保湿）"
+          "※新しい商品名", placeholder="例: トイレットペーパー"
       )
+
+    # スペック（ダブル・シングル・個数など）の入力欄を独立して追加
+    spec_input = st.text_input(
+        "スペック・詳細（例: ダブル 30m・72ロール）",
+        placeholder="ダブル、シングル、容量や巻き数などを記入",
+    )
 
     col_v1, col_v2, col_v3 = st.columns(3)
     with col_v1:
@@ -348,6 +350,7 @@ elif menu == "📝 価格・商品の登録":
           else p_choice
       )
       final_maker = maker_input.strip() if maker_input.strip() else None
+      final_spec = spec_input.strip() if spec_input.strip() else "標準スペック"
 
       if not target_store:
         st.error("⚠️ 店舗名を入力してください。")
@@ -372,8 +375,8 @@ elif menu == "📝 価格・商品の登録":
         if p_row:
           prod_id = p_row[0]
           cursor.execute(
-              "UPDATE products SET maker_name = ? WHERE id = ?",
-              (final_maker, prod_id),
+              "UPDATE products SET maker_name = ?, spec_detail = ? WHERE id = ?",
+              (final_maker, final_spec, prod_id),
           )
         else:
           cursor.execute(
@@ -386,7 +389,7 @@ elif menu == "📝 価格・商品の登録":
                   final_product,
                   "日用品・食品",
                   unit_val,
-                  "ユーザー登録商品",
+                  final_spec,
               ),
           )
           conn.commit()
@@ -440,8 +443,9 @@ elif menu == "📝 価格・商品の登録":
         conn.close()
 
         maker_display_str = f"[{final_maker}] " if final_maker else ""
+        spec_display_str = f" ({final_spec})" if final_spec else ""
         st.success(
-            f"✨ 【{target_store}】の「{maker_display_str}{final_product}」（総額"
+            f"✨ 【{target_store}】の「{maker_display_str}{final_product}{spec_display_str}」（総額"
             f" {int(price_val):,}円 / {capacity_val:g}"
             f" {unit_val}）を保存しました！（1{unit_val}あたり"
             f" {unit_price:.2f}円）"
@@ -463,11 +467,11 @@ elif menu == "⚙️ 店舗・商品マスタ管理":
     st.dataframe(stores_df, use_container_width=True)
 
   with tab2:
-    st.markdown("##### 📋 登録されている商品一覧")
+    st.markdown("##### 📋 登録されている商品一覧（スペックやダブルの表示も確認できます）")
     conn = sqlite3.connect(DB_NAME)
     products_df = pd.read_sql(
         """
-            SELECT maker_name as メーカー名, name as 商品名, category as カテゴリ, unit_name as 基準単位, spec_detail as スペック備考 
+            SELECT maker_name as メーカー名, name as 商品名, category as カテゴリ, unit_name as 基準単位, spec_detail as スペック詳細 
             FROM products
         """,
         conn,
