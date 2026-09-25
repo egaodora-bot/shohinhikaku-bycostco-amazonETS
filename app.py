@@ -1,6 +1,9 @@
 import datetime
+import re
 import sqlite3
+from bs4 import BeautifulSoup
 import pandas as pd
+import requests
 import streamlit as st
 
 # データベースの初期化
@@ -23,7 +26,7 @@ def init_db():
         )
     """)
 
-  # 価格データ
+  # 価格データ (店舗ごとの価格)
   cursor.execute("""
         CREATE TABLE IF NOT EXISTS prices (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,7 +50,24 @@ def init_db():
         )
     """)
 
-  # 初期データの投入（初回のみ）
+  # 初期データの投入（主要な店舗とサンプル商品）
+  cursor.execute("SELECT COUNT(*) FROM stores")
+  if cursor.fetchone()[0] == 0:
+    default_stores = [
+        ("Amazon", "EC・通販"),
+        ("コストコ", "大型倉庫店"),
+        ("カインズ", "近隣店舗"),
+        ("コスモス", "近隣店舗"),
+        ("ウエルシア", "近隣店舗"),
+        ("ベイシア", "近隣店舗"),
+    ]
+    for s_name, s_type in default_stores:
+      cursor.execute(
+          "INSERT OR IGNORE INTO stores (store_name, store_type) VALUES"
+          " (?, ?)",
+          (s_name, s_type),
+      )
+
   cursor.execute("SELECT COUNT(*) FROM products")
   if cursor.fetchone()[0] == 0:
     default_products = [
@@ -66,7 +86,7 @@ def init_db():
             "5箱パック・1箱200組",
         ),
         ("一般メーカー", "お米", "食品", "kg", "精米 5kg"),
-        ("花王", "洗濯用液体洗剤", "日用品", "ml", "詰替用 4kg"),
+        ("花王", "洗濯用液体洗剤", "日用品", "ml", "詰替用 4000ml"),
     ]
     for p_maker, p_name, p_cat, p_unit, p_spec in default_products:
       cursor.execute(
@@ -77,23 +97,6 @@ def init_db():
           (p_maker, p_name, p_cat, p_unit, p_spec),
       )
 
-  cursor.execute("SELECT COUNT(*) FROM stores")
-  if cursor.fetchone()[0] == 0:
-    default_stores = [
-        ("コストコ", "コストコ"),
-        ("Amazon", "Amazon"),
-        ("カインズ", "近隣店舗"),
-        ("コスモス", "近隣店舗"),
-        ("ウエルシア", "近隣店舗"),
-        ("ベイシア", "近隣店舗"),
-    ]
-    for s_name, s_type in default_stores:
-      cursor.execute(
-          "INSERT OR IGNORE INTO stores (store_name, store_type) VALUES"
-          " (?, ?)",
-          (s_name, s_type),
-      )
-
   conn.commit()
   conn.close()
 
@@ -101,7 +104,7 @@ def init_db():
 init_db()
 
 st.set_page_config(
-    page_title="買い物価格比較 & 底値DB 【完成版】",
+    page_title="買い物価格比較 & 底値DB 【完全無料・自動取得対応版】",
     page_icon="🛒",
     layout="wide",
 )
@@ -137,24 +140,26 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.markdown("### 🛒 買い物価格比較 & 底値DB 【完成版】")
+st.markdown(
+    "### 🛒 買い物価格比較 & 底値DB 【完全無料・Amazon/コストコ対応】"
+)
 
 # サイドバー：メニュー選択
 st.sidebar.markdown("### 📌 メニュー")
 menu = st.sidebar.radio(
     "移動先を選択してください",
     [
-        "🔍 価格比較・検索",
-        "📝 価格・商品の登録",
+        "🔍 価格比較・最安値チェック",
+        "📝 価格・商品の登録（Amazon自動読込対応）",
         "⚙️ 店舗・商品マスタ管理",
-        "🛠️ データ自動チェック＆クレンジング",
+        "🛠️ データ自動整合性チェック",
     ],
 )
 
 
 # --- ① 価格比較・検索画面 ---
-if menu == "🔍 価格比較・検索":
-  st.markdown("#### 🔍 商品の価格・実質単価比較")
+if menu == "🔍 価格比較・最安値チェック":
+  st.markdown("#### 🔍 Amazon・コストコを含めた全店舗の価格・実質単価比較")
 
   conn = sqlite3.connect(DB_NAME)
   cursor = conn.cursor()
@@ -162,7 +167,6 @@ if menu == "🔍 価格比較・検索":
   all_products = cursor.fetchall()
   conn.close()
 
-  # 選択肢用のリストを作成（綺麗に結合）
   prod_options = {}
   for p in all_products:
     p_id, m_name, p_name, spec = p[0], p[1], p[2], p[3]
@@ -172,7 +176,7 @@ if menu == "🔍 価格比較・検索":
     prod_options[label] = p_id
 
   selected_label = st.selectbox(
-      "登録済み商品から選択して比較",
+      "比較したい商品を選択",
       list(prod_options.keys()) if prod_options else ["（商品がありません）"],
   )
 
@@ -219,12 +223,12 @@ if menu == "🔍 価格比較・検索":
         f"**基準単位**: `{unit_name}`"
     )
     st.markdown("---")
-    st.markdown("##### 📊 各店舗の価格・実質単価比較")
+    st.markdown("##### 📊 各店舗（Amazon・コストコ等）の価格・実質単価比較")
 
     if not rows:
       st.info(
-          f"💡 「{target_product}」の価格データがまだ登録されていません。「📝"
-          " 価格・商品の登録」メニューから価格と容量を登録してください。"
+          f"💡 「{target_product}{display_spec}」の価格データがまだ登録されていません。「📝"
+          " 価格・商品の登録」から価格を追加してください。"
       )
     else:
       data_list = []
@@ -236,7 +240,7 @@ if menu == "🔍 価格比較・検索":
             "支払総額": f"{int(t_price):,} 円",
             "総容量・数量": f"{t_cap:g} {unit_name}",
             f"1{unit_name}あたり単価": f"{u_price:.2f} 円/{unit_name}",
-            "更新日": upd_date,
+            "最終更新日": upd_date,
         })
         raw_unit_prices.append(u_price)
 
@@ -262,17 +266,88 @@ if menu == "🔍 価格比較・検索":
       min_idx = raw_unit_prices.index(min_unit_price)
       best_row = rows[min_idx]
       st.success(
-          f"🏆 **【最安値・お得情報】**\n\n"
-          f"一番お得なのは **{best_row[0]}** です！\n"
+          f"🏆 **【最安値・お買い得情報】**\n\n"
+          f"現在一番お得な購入先は **{best_row[0]}** です！\n"
           f"- **支払総額**: **{int(best_row[1]):,}円** （総容量: {best_row[2]:g}"
           f" {unit_name}）\n"
           f"- **1{unit_name}あたりの単価**: **{best_row[3]:.2f}円**"
       )
 
-# --- ② 価格・商品の登録画面 ---
-elif menu == "📝 価格・商品の登録":
-  st.markdown("#### 📝 店舗ごとの価格・容量の手動登録")
-  st.write("商品名、メーカー、スペックを明確に分けて正確に登録できます。")
+
+# --- ② 価格・商品の登録画面（Amazon自動読込対応） ---
+elif menu == "📝 価格・商品の登録（Amazon自動読込対応）":
+  st.markdown("#### 📝 価格・商品の登録 ＆ Amazon自動アシスト")
+  st.write(
+      "AmazonのURLを貼り付けてボタンを押すと、商品名や価格のヒントを無料で自動取得できます。"
+  )
+
+  # セッション状態で自動取得データを保持
+  if "scraped_title" not in st.session_state:
+    st.session_state.scraped_title = ""
+  if "scraped_price" not in st.session_state:
+    st.session_state.scraped_price = 0.0
+
+  with st.expander(
+      "🔗 【便利機能】AmazonのURLから自動で商品名・価格を読み取る",
+      expanded=False,
+  ):
+    amazon_url = st.text_input(
+        "Amazonの商品ページURLを入力",
+        placeholder="https://www.amazon.co.jp/dp/B0...",
+    )
+    if st.button("🔄 Amazonから情報を取得する"):
+      if not amazon_url.strip():
+        st.warning("⚠️ AmazonのURLを入力してください。")
+      else:
+        try:
+          headers = {
+              "User-Agent": (
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                  " (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+              ),
+              "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+          }
+          res = requests.get(amazon_url, headers=headers, timeout=5)
+          if res.status_code == 200:
+            soup = BeautifulSoup(res.text, "html.parser")
+
+            # 商品名取得
+            title_elem = soup.select_one("#productTitle")
+            title = (
+                title_elem.get_text(strip=True)
+                if title_elem
+                else "（商品名自動取得できず）"
+            )
+
+            # 価格取得の試行
+            price_val_scraped = 0.0
+            price_elem = soup.select_one(
+                ".a-price .a-offscreen, #priceblock_ourprice,"
+                " #priceblock_dealprice"
+            )
+            if price_elem:
+              price_text = price_elem.get_text(strip=True)
+              # 数字とカンマ以外を削除して数値化
+              num_str = re.sub(r"[^\d]", "", price_text)
+              if num_str:
+                price_val_scraped = float(num_str)
+
+            st.session_state.scraped_title = title
+            st.session_state.scraped_price = price_val_scraped
+            st.success(
+                "✨ 情報を取得しました！ 下記の登録フォームに反映されます。"
+            )
+          else:
+            st.error(
+                "⚠️ Amazon側からアクセスがブロックされました（ステータスコード:"
+                f" {res.status_code}）。手動で入力してください。"
+            )
+        except Exception as e:
+          st.error(
+              "⚠️ 取得中にエラーが発生しました（Amazonのボット対策等の影響）。手動入力をご利用ください。"
+          )
+
+  st.markdown("---")
 
   conn = sqlite3.connect(DB_NAME)
   cursor = conn.cursor()
@@ -299,7 +374,7 @@ elif menu == "📝 価格・商品の登録":
       )
     with col_s2:
       new_store_input = st.text_input(
-          "※新しい店舗名（左で追加を選んだ場合）", placeholder="例: 近隣のスーパー"
+          "※新しい店舗名（左で追加を選んだ場合）", placeholder="例: ヨドバシ.com"
       )
 
     st.markdown("---")
@@ -314,7 +389,11 @@ elif menu == "📝 価格・商品の登録":
       )
     with col_p3:
       p_custom = st.text_input(
-          "※新しい商品名", placeholder="例: トイレットペーパー"
+          "※新しい商品名",
+          value=st.session_state.scraped_title[:40]
+          if st.session_state.scraped_title
+          else "",
+          placeholder="例: トイレットペーパー",
       )
 
     col_spec1, col_spec2 = st.columns(2)
@@ -330,7 +409,12 @@ elif menu == "📝 価格・商品の登録":
     col_v1, col_v2, col_v3 = st.columns(3)
     with col_v1:
       price_val = st.number_input(
-          "支払総額 (円)", min_value=0.0, step=10.0, value=1280.0
+          "支払総額 (円)",
+          min_value=0.0,
+          step=10.0,
+          value=st.session_state.scraped_price
+          if st.session_state.scraped_price > 0
+          else 1280.0,
       )
     with col_v2:
       capacity_val = st.number_input(
@@ -344,7 +428,7 @@ elif menu == "📝 価格・商品の登録":
           "単位", ["ロール", "m", "個", "箱", "kg", "ml", "本"]
       )
 
-    submitted = st.form_submit_button("💾 この価格データを保存する")
+    submitted = st.form_submit_button("💾 価格データを保存・更新する")
 
     if submitted:
       target_store = (
@@ -358,7 +442,6 @@ elif menu == "📝 価格・商品の登録":
       if p_choice == "【＋新しい商品を追加】":
         final_product = p_custom.strip()
       else:
-        # 選択されたラベルから元の製品名を取り出す
         selected_p_id = product_map.get(p_choice)
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -377,7 +460,6 @@ elif menu == "📝 価格・商品の登録":
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
 
-        # 店舗の登録確認
         cursor.execute("SELECT id FROM stores WHERE store_name = ?", (target_store,))
         if not cursor.fetchone():
           cursor.execute(
@@ -386,7 +468,6 @@ elif menu == "📝 価格・商品の登録":
           )
           conn.commit()
 
-        # 商品の存在確認（同じ商品名かつ同じスペックのものがなければ新規、あれば更新）
         cursor.execute(
             "SELECT id FROM products WHERE name = ? AND (spec_detail = ? OR"
             " (spec_detail IS NULL AND ? = ''))",
@@ -423,7 +504,6 @@ elif menu == "📝 価格・商品の登録":
         )
         today = datetime.date.today().isoformat()
 
-        # 価格データの保存
         cursor.execute(
             """
                 SELECT id FROM prices WHERE product_id = ? AND store_name = ?
@@ -466,10 +546,15 @@ elif menu == "📝 価格・商品の登録":
         conn.commit()
         conn.close()
 
+        # 登録成功したらセッションをクリア
+        st.session_state.scraped_title = ""
+        st.session_state.scraped_price = 0.0
+
         st.success(
             f"✨ 【{target_store}】の「{final_product} ({final_spec})」を保存しました！"
             f" （1{unit_val}あたり {unit_price:.2f}円）"
         )
+
 
 # --- ③ 店舗・商品マスタ管理画面 ---
 elif menu == "⚙️ 店舗・商品マスタ管理":
@@ -499,24 +584,21 @@ elif menu == "⚙️ 店舗・商品マスタ管理":
     conn.close()
     st.dataframe(products_df, use_container_width=True)
 
-# --- ④ データ自動チェック＆クレンジング画面 ---
-elif menu == "🛠️ データ自動チェック＆クレンジング":
-  st.markdown("#### 🛠️ データの自動診断とクレンジング")
-  st.write(
-      "データベース内の矛盾や重複、ゴミデータを自動検出し、綺麗に整理します。"
-  )
+
+# --- ④ データ自動チェック機能 ---
+elif menu == "🛠️ データ自動整合性チェック":
+  st.markdown("#### 🛠️ データの自動診断と整合性チェック")
+  st.write("データベース内のデータ状態を自動チェックします。")
 
   conn = sqlite3.connect(DB_NAME)
   cursor = conn.cursor()
 
-  # データの状態を診断
   cursor.execute("SELECT COUNT(*) FROM products")
   total_prods = cursor.fetchone()[0]
 
   cursor.execute("SELECT COUNT(*) FROM prices")
   total_prices = cursor.fetchone()[0]
 
-  # 価格データのない孤立商品の検出し上げ
   cursor.execute("""
         SELECT p.id, p.name, p.spec_detail FROM products p
         LEFT JOIN prices pr ON p.id = pr.product_id
@@ -532,13 +614,11 @@ elif menu == "🛠️ データ自動チェック＆クレンジング":
   col3.metric("価格未登録の商品", f"{len(orphaned_products)} 件")
 
   st.markdown("---")
-  st.markdown("##### 🧹 自動メンテナンスツール")
+  st.markdown("##### 🧹 自動クレンジング機能")
 
-  if st.button("🚀 重複データの整理とクレンジングを実行する"):
+  if st.button("🚀 データの重複・矛盾を自動修復する"):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-
-    # 例: まったく同じ名前とスペックの重複レコードがある場合に統合する処理
     cursor.execute("""
             DELETE FROM products 
             WHERE id NOT IN (
@@ -549,17 +629,17 @@ elif menu == "🛠️ データ自動チェック＆クレンジング":
         """)
     conn.commit()
     conn.close()
-    st.success(
-        "✨ データのクレンジングが完了しました！重複や矛盾が整理されました。"
-    )
+    st.success("✨ データのクレンジングが正常に完了しました！")
     st.rerun()
 
   if orphaned_products:
-    st.markdown("##### ⚠️ 価格データが登録されていない商品一覧")
+    st.markdown("##### ⚠️ 価格データがまだ登録されていない商品")
     for op in orphaned_products:
       st.warning(
           f"商品名: **{op[1]}** （スペック: {op[2] if op[2] else 'なし'}）"
-          " -> 価格がまだ登録されていません。"
+          " -> 価格が未登録です。"
       )
   else:
-    st.success("🎉 すべての商品に価格データが紐付いています！")
+    st.success(
+        "🎉 すべての商品に価格データが紐付いており、完璧な状態です！"
+    )
